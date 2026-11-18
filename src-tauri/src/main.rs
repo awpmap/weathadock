@@ -255,7 +255,12 @@ fn tray_tooltip(app: &AppHandle) -> String {
         };
     };
     let deg = |v: &Value| v.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "--".into());
-    let mut parts = vec![format!("{temp}° {}", s["current"]["condition"].as_str().unwrap_or(""))];
+    // Lead with what this is, so the number is never taken for a hardware temperature.
+    let place = active_location(app).map(|l| place_label(&l));
+    let mut parts = vec![
+        place.map_or_else(|| "Weather".to_string(), |p| format!("Weather in {p}")),
+        format!("{temp}°F {}", s["current"]["condition"].as_str().unwrap_or("")),
+    ];
     if s["today"].is_object() {
         parts.push(format!("H {}°  L {}°", deg(&s["today"]["high"]), deg(&s["today"]["low"])));
     }

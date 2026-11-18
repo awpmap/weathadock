@@ -34,7 +34,7 @@
     if (r.width > 0 && r.height > 0) window.sky.setContentSize(Math.min(MAX_W, Math.ceil(r.width)), Math.min(MAX_H, Math.ceil(r.height)));
   }
 
-  /* 64x64 tray icon: temperature digits, soft dark outline, alert dot */
+  /* 64x64 tray icon: temperature on a sky-blue tile, alert dot */
   function drawTray(s) {
     var temp = s.current && s.current.temp != null ? String(Math.round(s.current.temp)) : null;
     var a = s.alerts && s.alerts[0];
@@ -46,22 +46,33 @@
     var g = c.getContext('2d');
     g.lineJoin = 'round'; g.lineCap = 'round';
     if (temp != null) {
-      /* digits only: at 16-24 px a degree sign costs more legibility than it adds */
+      /* A sky-blue tile in the app icon's colors, so the number reads as weather and is not
+         mistaken for the bare CPU or GPU temperatures that hardware monitors put in the tray. */
+      var sky = g.createLinearGradient(8, 0, 56, 64);
+      sky.addColorStop(0, '#4FB0FF'); sky.addColorStop(0.55, '#2A7FEF'); sky.addColorStop(1, '#1A52D2');
+      g.beginPath(); g.roundRect(1, 1, 62, 62, 15);
+      g.fillStyle = sky; g.fill();
       var text = temp, F = '"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif';
+      /* a degree mark when there is room for it (one or two digits, no alert dot) */
+      var deg = text.length <= 2 && !a;
+      var room = deg ? 44 : 54;
       g.font = '700 60px ' + F;
-      var size = Math.min(64, Math.floor(60 * 58 / g.measureText(text).width));
+      var size = Math.min(56, Math.floor(60 * room / g.measureText(text).width));
       g.font = '700 ' + size + 'px ' + F;
       g.textAlign = 'center'; g.textBaseline = 'alphabetic';
       var m = g.measureText(text);
       var asc = m.actualBoundingBoxAscent, desc = m.actualBoundingBoxDescent;
-      /* stretch vertically (max 1.35x) so the number fills the square */
-      var sy = Math.max(1, Math.min(1.35, 54 / (asc + desc)));
+      /* stretch vertically (max 1.3x) so the number fills the tile */
+      var sy = Math.max(1, Math.min(1.3, 44 / (asc + desc)));
+      var half = m.width / 2, cx = deg ? 28 : 32;
       g.save();
-      g.translate(32, 32); g.scale(1, sy);
-      var y = (asc - desc) / 2;
-      g.strokeStyle = 'rgba(0,0,0,0.62)'; g.lineWidth = 7; g.strokeText(text, 0, y);
-      g.fillStyle = '#fff'; g.fillText(text, 0, y);
+      g.translate(cx, 33); g.scale(1, sy);
+      g.fillStyle = '#fff'; g.fillText(text, 0, (asc - desc) / 2);
       g.restore();
+      if (deg) {
+        g.beginPath(); g.arc(Math.min(55, cx + half + 6), 17, 4.5, 0, Math.PI * 2);
+        g.strokeStyle = '#fff'; g.lineWidth = 3.5; g.stroke();
+      }
     } else {
       g.beginPath();
       g.moveTo(18, 48); g.lineTo(44, 48);

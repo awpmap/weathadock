@@ -1,4 +1,4 @@
-/* Skylight desktop widget */
+/* WeathaDock desktop widget */
 (function () {
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
@@ -37,7 +37,7 @@
 
   function topRow(s, short) {
     var tz = s.location && s.location.timeZone;
-    var loc = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'Skylight';
+    var loc = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'WeathaDock';
     var dots = placeDots();
     var upd;
     if (s.stale) upd = '<span class="w-upd is-stale" title="' + esc(s.error || '') + '"><i class="w-dot"></i>Offline' + (short ? '' : ' · as of ' + esc(U.time(s.updatedAt, tz))) + '</span>';
@@ -111,7 +111,7 @@
   }
 
   function loadingView(s) {
-    var where = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'Skylight';
+    var where = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'WeathaDock';
     /* transparent style and small layouts: no skeleton blocks, just a quiet line */
     if (document.documentElement.dataset.glass === 'none' || layout() !== 'full') {
       return '<div class="w-wait" data-open="overview">' + I.wx('partly-cloudy', true) + '<div><b>' + where + '</b><span>' + I.gl('refresh', 'spin') + 'Getting the latest forecast…</span></div></div>';

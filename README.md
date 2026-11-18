@@ -10,6 +10,12 @@ A translucent desktop weather widget for Windows 10 and 11.
 - **Click anything** to open the full window: overview, 48-hour chart, 7-day forecast, full alert
   text, and settings.
 
+## Install
+
+Download `WeathaDock-Setup-<version>.exe` from the [latest release](https://github.com/awpmap/weathadock/releases/latest)
+and run it. After that the app updates itself: it checks for new releases in the background and
+offers a restart when one is ready (Settings, Updates).
+
 The first run asks for a US zip code. No account or API key is needed.
 
 ## Data

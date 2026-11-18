@@ -1,4 +1,4 @@
-/* Skylight shared renderer helpers (formatting, mock bootstrap, drag-vs-click). */
+/* WeathaDock shared renderer helpers (formatting, mock bootstrap, drag-vs-click). */
 (function () {
   'use strict';
 

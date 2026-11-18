@@ -1,4 +1,4 @@
-/* Skylight detail window */
+/* WeathaDock detail window */
 (function () {
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
@@ -620,16 +620,16 @@
     var u = update, sub = $('upd-sub'), check = $('upd-check'), inst = $('upd-install'), bar = $('upd-bar');
     if (!u) { $('upd-card').hidden = true; $('updates-title').hidden = true; $('tb-update').hidden = true; return; }
     $('upd-card').hidden = false; $('updates-title').hidden = false;
-    $('upd-name').textContent = 'Skylight ' + (u.version || '');
+    $('upd-name').textContent = 'WeathaDock ' + (u.version || '');
     var text = '', cls = '', busy = u.status === 'checking' || u.status === 'downloading';
     var checked = u.checkedAt ? U.when(u.checkedAt, undefined) : '';
     if (u.status === 'unsupported') text = 'Updates are available in the installed version.';
     else if (u.status === 'checking') text = 'Checking for updates…';
     else if (u.status === 'downloading') text = 'Downloading version ' + (u.newVersion || '') + (u.percent != null ? ' · ' + Math.round(u.percent) + '%' : '…');
-    else if (u.status === 'ready') { text = 'Version ' + (u.newVersion || '') + ' is ready. Restart Skylight to finish updating.'; cls = 'is-good'; }
+    else if (u.status === 'ready') { text = 'Version ' + (u.newVersion || '') + ' is ready. Restart WeathaDock to finish updating.'; cls = 'is-good'; }
     else if (u.status === 'up-to-date') text = 'You\u2019re up to date' + (checked ? ' · checked ' + checked : '') + '.';
     else if (u.status === 'error') { text = u.error || 'Couldn\u2019t check for updates.'; cls = 'is-bad'; }
-    else text = checked ? 'Last checked ' + checked + '.' : 'Skylight checks for updates automatically.';
+    else text = checked ? 'Last checked ' + checked + '.' : 'WeathaDock checks for updates automatically.';
     sub.textContent = text; sub.className = 'set-sub ' + cls;
     bar.hidden = u.status !== 'downloading';
     $('upd-fill').style.width = Math.max(2, Math.min(100, u.percent || 0)) + '%';

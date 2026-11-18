@@ -1,4 +1,4 @@
-/* Skylight icon set: hand-built inline SVG, no fonts, no external assets.
+/* WeathaDock icon set: hand-built inline SVG, no fonts, no external assets.
    SkyIcons.wx(key, isDay, {animated}) -> HTML string for a weather icon sized 1em (set font-size).
    SkyIcons.gl(name) -> HTML string for a small monochrome UI glyph (currentColor). */
 (function () {

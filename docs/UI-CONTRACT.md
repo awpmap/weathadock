@@ -1,4 +1,4 @@
-# Skylight renderer contract
+# WeathaDock renderer contract
 
 The main process owns data, windows and settings. Renderer pages are plain HTML/CSS/JS
 (no bundler, no framework, no CDN, no remote fonts: the app must work offline and CSP is

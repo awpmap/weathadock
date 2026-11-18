@@ -1,4 +1,4 @@
-/* Skylight first-run setup */
+/* WeathaDock first-run setup */
 (function () {
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;

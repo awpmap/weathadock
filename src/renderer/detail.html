@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
-<title>Skylight</title>
+<title>WeathaDock</title>
 <script src="boot.js"></script>
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="controls.css">
@@ -12,7 +12,7 @@
 <body>
 <div class="app">
   <header class="tb">
-    <div class="tb-brand"><span class="tb-logo" id="tb-logo"></span><span>Skylight</span></div>
+    <div class="tb-brand"><span class="tb-logo" id="tb-logo"></span><span>WeathaDock</span></div>
     <div class="tb-right">
     <button class="tb-update" id="tb-update" hidden><span data-gl="download"></span>Update ready</button>
     <div class="winctl">
@@ -136,7 +136,7 @@
           </div>
           <div class="set-row">
             <span class="set-ic" data-gl="rocket"></span>
-            <div class="set-tx"><div class="set-name">Launch at login</div><div class="set-sub">Start Skylight when you sign in to Windows.</div></div>
+            <div class="set-tx"><div class="set-name">Launch at login</div><div class="set-sub">Start WeathaDock when you sign in to Windows.</div></div>
             <button class="switch" role="switch" data-set="launchAtLogin" aria-label="Launch at login"></button>
           </div>
           <div class="set-row">
@@ -158,7 +158,7 @@
         <div class="card set" id="upd-card">
           <div class="set-row">
             <span class="set-ic" data-gl="download"></span>
-            <div class="set-tx"><div class="set-name" id="upd-name">Skylight</div><div class="set-sub" id="upd-sub" aria-live="polite"></div>
+            <div class="set-tx"><div class="set-name" id="upd-name">WeathaDock</div><div class="set-sub" id="upd-sub" aria-live="polite"></div>
               <div class="upd-bar" id="upd-bar" hidden><i id="upd-fill"></i></div></div>
             <div class="set-ctl">
               <button class="btn" id="upd-check"><span data-gl="refresh"></span><span id="upd-check-tx">Check for updates</span></button>
@@ -182,8 +182,8 @@
         </div>
 
         <div class="set-foot">
-          <span>Skylight is not affiliated with the National Weather Service. For life-threatening weather, follow official instructions.</span>
-          <button class="btn is-danger" id="set-quit"><span data-gl="power"></span>Quit Skylight</button>
+          <span>WeathaDock is not affiliated with the National Weather Service. For life-threatening weather, follow official instructions.</span>
+          <button class="btn is-danger" id="set-quit"><span data-gl="power"></span>Quit WeathaDock</button>
         </div>
       </section>
     </main>

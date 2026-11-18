@@ -602,7 +602,7 @@ app.whenReady().then(() => {
   // Carry over settings saved by the first preview build, which used a placeholder name.
   try {
     const current = path.join(app.getPath('userData'), 'settings.json');
-    const previous = path.join(app.getPath('appData'), 'Skylight', 'settings.json');
+    const previous = path.join(app.getPath('appData'), 'WeathaDock', 'settings.json');
     if (!fs.existsSync(current) && fs.existsSync(previous)) {
       fs.mkdirSync(path.dirname(current), { recursive: true });
       fs.copyFileSync(previous, current);

@@ -1,4 +1,4 @@
-/* Skylight taskbar pill */
+/* WeathaDock taskbar pill */
 (function () {
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;

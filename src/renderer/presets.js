@@ -50,7 +50,7 @@
     { id: 'rain', name: 'Rain watch', description: 'Incoming rain or snow with the 6-hour timeline.',
       widget: cfg('vertical', 'medium', 'left', 6, 5, ['location', 'refresh', 'incoming', 'timeline', 'alerts']) },
     { id: 'dashboard', name: 'Dashboard', description: 'Everything, laid out wide.',
-      widget: cfg('horizontal', 'medium', 'left', 8, 7, KEYS.slice()) },
+      widget: cfg('horizontal', 'medium', 'left', 6, 7, KEYS.slice()) },
     { id: 'conditions', name: 'Conditions', description: 'Now with wind, humidity, UV and sun times.',
       widget: cfg('vertical', 'medium', 'left', 6, 5, ['location', 'refresh'].concat(NOW, ['wind', 'humidity', 'uv', 'sun', 'alerts'])) }
   ];

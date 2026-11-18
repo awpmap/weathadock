@@ -330,7 +330,8 @@
     glass: gp === 'clear' || gp === 'frosted' ? gp : 'none',
     layout: startPreset ? startPreset.id : 'full',
     widget: startPreset ? clone(startPreset.widget) : null,
-    coveredMode: 'tray', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10
+    coveredMode: 'tray', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10,
+    lockPosition: params.get('lock') === '1', snapToEdges: true, widgetOnTop: false, widgetOpacity: 100
   };
   if (params.get('widget')) {
     try { settings.widget = mergeWidget(settings.widget || {}, JSON.parse(params.get('widget'))); settings.layout = 'custom'; }
@@ -458,6 +459,7 @@
     windowControl: function (action) { log('windowControl', action); },
     moveBy: function (dx, dy) { log('moveBy', dx, dy); },
     dragEnd: function () { log('dragEnd'); },
+    showContextMenu: function () { window.__contextMenus = (window.__contextMenus || 0) + 1; log('showContextMenu'); },
     setContentSize: function (w, h) { window.__contentSize = { width: w, height: h }; log('setContentSize', w, h); },
     setTrayIcon: function (dataUrl) { window.__trayIcon = dataUrl; },
     quit: function () { log('quit'); }

@@ -62,7 +62,7 @@
 .wv-alert-sub { font-size: 11.5px; color: rgba(255, 255, 255, 0.86); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .wv-alert-more { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 20px; background: rgba(0, 0, 0, 0.3); flex: none; }
 .wv-alert-chev { font-size: 14px; color: rgba(255, 255, 255, 0.75); flex: none; }
-.wv .wv-alert .gl, .wv .wv-chip .gl { filter: none; }
+.wv .wv-alert .wv-alert-ic .gl, .wv .wv-alert .wv-alert-chev .gl, .wv .wv-chip .wv-chip-ic .gl { filter: none; stroke-width: 1.6; }
 
 /* small alert chip (inline mode) */
 .wv-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 210px; padding: 0 10px 0 4px; border-radius: 13px; font-size: 12px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -97,13 +97,22 @@
 /* now */
 .wv-now { padding-bottom: 15px; }
 .wv-now:first-child { padding-top: 12px; }
-.wv-now-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.wv-temp { font-size: 84px; line-height: 1; font-weight: 300; letter-spacing: -0.045em; margin-left: -4px; display: flex; align-items: flex-start; white-space: nowrap; text-shadow: var(--wv-halo-big, 0 2px 10px rgba(0, 0, 0, 0.28)); }
+.wv-now-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.wv-now, .wv-inline { --wv-tf: 84px; }
+.wv-temp { position: relative; font-size: var(--wv-tf); line-height: 1; font-weight: 300; letter-spacing: -0.045em; margin-left: -0.05em; display: flex; align-items: flex-start; white-space: nowrap; text-shadow: var(--wv-halo-big, 0 2px 10px rgba(0, 0, 0, 0.28)); }
 .wv[data-ink="dark"] .wv-temp { text-shadow: var(--wv-halo-big, none); }
-.wv-temp sup { font-size: 0.5em; font-weight: inherit; line-height: 1; margin: 0.1em 0 0 0.04em; color: var(--t2); letter-spacing: 0; }
-.wv-icon { font-size: 100px; margin: -8px -8px -10px 0; line-height: 0; flex: none; }
-.wv-now:not(.has-temp) .wv-icon { margin: 0 0 0 -8px; font-size: 92px; }
+/* degree sign: a drawn ring whose top sits exactly on the digits' top line, so the number never looks taller than its icon */
+.wv-deg { flex: none; box-sizing: border-box; width: 0.2em; height: 0.2em; border-radius: 50%; border: 0.042em solid currentColor; opacity: 0.86;
+  margin: calc((0.5 + var(--wv-shift, 0) - var(--wv-cap, 0.715) / 2) * 1em) 0 0 0.075em; filter: var(--wv-gl, none); }
+.wv[data-glass="none"] .wv-deg { border-width: 0.052em; opacity: 1; }
+.wv-icon { font-size: 92px; line-height: 0; flex: none; }
+/* paired with the temperature: artwork height = digit height (--k), centred on the digits' optical middle (--dy) */
+.wv-icon.is-paired { font-size: calc(var(--wv-tf) * var(--k, 0.92)); margin: calc((var(--wv-tf) - 1em) / 2) 0; transform: translateY(calc(var(--wv-tf) * var(--dy, 0))); }
 .wv-icon .wx svg { filter: var(--wv-wx, drop-shadow(0 4px 8px rgba(0, 0, 0, 0.28))); }
+.wv-now:not(.has-temp) .wv-icon { margin-left: -8px; }
+.wv-now-top { min-height: calc(var(--wv-tf) * 0.94); }
+/* design aid (?guides=1): digit top and bottom lines */
+.wv.wv-guides .wv-temp::after { content: ""; position: absolute; left: -400px; right: -400px; top: calc((0.5 + var(--wv-shift, 0) - var(--wv-cap, 0.715) / 2) * 1em); height: calc(var(--wv-cap, 0.715) * 1em); border-top: 1px solid #ff3b6b; border-bottom: 1px solid #ff3b6b; box-sizing: border-box; pointer-events: none; }
 .wv-cond { font-size: 17px; font-weight: 600; margin-top: 4px; white-space: nowrap; }
 .wv-now.is-text .wv-cond { margin-top: 0; font-size: 19px; }
 .wv-meta { display: flex; align-items: center; gap: 12px; margin-top: 5px; font-size: 13px; color: var(--t2); white-space: nowrap; }
@@ -150,7 +159,8 @@
 .wv-h-p { font-size: 10.5px; font-weight: 600; color: var(--wv-pop); height: 13px; line-height: 13px; }
 
 /* days */
-.wv-days { padding-top: 7px; padding-bottom: 9px; }
+.wv-days { padding-top: 7px; padding-bottom: 9px; text-align: left; }
+.wv-hours { text-align: center; }
 .wv-d { display: grid; grid-template-columns: 46px 26px 40px 32px 1fr 32px; align-items: center; height: 31px; font-size: 13.5px; }
 .wv-d-n { font-weight: 600; white-space: nowrap; }
 .wv-d .wx { font-size: 23px; }
@@ -166,11 +176,11 @@
 .wv[data-align="center"] .wv-now, .wv[data-align="center"] .wv-stack { text-align: center; }
 .wv[data-align="right"] .wv-now, .wv[data-align="right"] .wv-stack { text-align: right; }
 .wv[data-align="center"] .wv-now-top { flex-direction: column-reverse; justify-content: center; gap: 2px; }
-.wv[data-align="center"] .wv-temp { margin-left: 0; padding-left: 0.14em; }
-.wv[data-align="center"] .wv-icon, .wv[data-align="center"] .wv-now:not(.has-temp) .wv-icon { margin: -6px 0 -4px; }
+.wv[data-align="center"] .wv-temp { margin-left: 0; padding-left: 0.2em; }
+.wv[data-align="center"] .wv-icon.is-paired { margin: 0 0 calc(var(--wv-tf) * -0.06); transform: none; }
+.wv[data-align="center"] .wv-now:not(.has-temp) .wv-icon { margin: 0; }
 .wv[data-align="right"] .wv-now-top { flex-direction: row-reverse; }
-.wv[data-align="right"] .wv-icon { margin: -8px 0 -10px -8px; }
-.wv[data-align="right"] .wv-temp { margin: 0 -2px 0 0; }
+.wv[data-align="right"] .wv-temp { margin: 0; }
 .wv[data-align="center"] .wv-meta, .wv[data-align="center"] .wv-stats, .wv[data-align="center"] .wv-inc-row, .wv[data-align="center"] .wv-hours { justify-content: center; }
 .wv[data-align="right"] .wv-meta, .wv[data-align="right"] .wv-stats, .wv[data-align="right"] .wv-inc-row, .wv[data-align="right"] .wv-hours { justify-content: flex-end; }
 .wv[data-align="center"] .wv-head { justify-content: center; gap: 12px; }
@@ -188,12 +198,11 @@
 .wv-col + .wv-col::before { content: ""; position: absolute; left: 0; top: 16px; bottom: 14px; width: 1px; background: var(--line); }
 .wv-col-a { min-width: 244px; }
 .wv-col-a .wv-now { padding-bottom: 13px; }
-.wv-col-a .wv-temp { font-size: 76px; }
-.wv-col-a .wv-icon { font-size: 88px; }
+.wv-col-a .wv-now { --wv-tf: 76px; }
 .wv-col-b { padding-top: 5px; }
 .wv-col-b.no-hours { width: 288px; }
 .wv-col-b .wv-hours { grid-template-columns: repeat(var(--cols, 6), 50px); justify-content: start; }
-.wv-col-c { width: 274px; padding-top: 7px; }
+.wv-col-c { flex: 1 0 274px; max-width: 400px; padding-top: 7px; }
 .wv-col-c .wv-d { grid-template-columns: 44px 26px 42px 30px 1fr 30px; }
 .wv-col:only-child.wv-col-b, .wv-col:only-child.wv-col-c { padding-top: 2px; }
 
@@ -201,9 +210,11 @@
 .wv-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 13px; padding: 7px 14px 7px 10px; }
 .wv[data-align="center"] .wv-inline { justify-content: center; }
 .wv[data-align="right"] .wv-inline { justify-content: flex-end; }
-.wv-i-now { display: inline-flex; align-items: center; gap: 4px; }
-.wv-inline .wv-icon { font-size: 62px; margin: -5px 0 -5px -4px; }
-.wv-inline .wv-temp { font-size: 58px; margin: 0 2px 0 0; }
+.wv-i-now { display: inline-flex; align-items: center; }
+.wv-inline { --wv-tf: 58px; }
+.wv-i-now { gap: 12px; }
+.wv-inline .wv-icon:not(.is-paired) { font-size: 60px; margin: -4px 0; }
+.wv-inline .wv-temp { margin: 0; }
 .wv-i-stack { display: inline-flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; }
 .wv-inline .wv-cond { margin: 0; font-size: 15px; }
 .wv-inline .wv-meta { margin: 0; font-size: 12.5px; gap: 10px; }
@@ -265,6 +276,8 @@
   --wv-chip: rgba(255, 255, 255, 0.72); --wv-hover: rgba(255, 255, 255, 0.55); --wv-knob-ring: rgba(255, 255, 255, 0.95);
 }
 .wv[data-glass="none"] .wv-temp { font-weight: 500; letter-spacing: -0.04em; }
+.wv-sec, .wv-alert, .wv-inline > * { transition: opacity 0.2s var(--ease); }
+.wv.is-pending .wv-sec:not(.wv-head), .wv.is-pending .wv-alert, .wv.is-pending .wv-inline > *:not(.wv-ref):not(.wv-i-place) { opacity: 0.45; }
 .wv[data-glass="none"] .gl, .wv[data-glass="none"] .wv-arrow { filter: var(--wv-gl); stroke-width: 1.8; }
 .wv[data-glass="none"] .wv-loc, .wv[data-glass="none"] .wv-cond, .wv[data-glass="none"] .wv-d-n, .wv[data-glass="none"] .wv-h-v, .wv[data-glass="none"] .wv-d-hi { font-weight: 650; }
 .wv[data-glass="none"] .wv-h-t, .wv[data-glass="none"] .wv-upd, .wv[data-glass="none"] .ptl-ticks, .wv[data-glass="none"] .wv-meta, .wv[data-glass="none"] .wv-d-lo, .wv[data-glass="none"] .wv-stat, .wv[data-glass="none"] .wv-i-stats { font-weight: 600; }

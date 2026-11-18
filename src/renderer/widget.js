@@ -13,11 +13,17 @@
     return W.normalize(s.widget || W.presetConfig(s.layout) || W.presetConfig('full'));
   }
 
+  /* While a new place or the first refresh is loading, keep showing the last forecast (dimmed)
+     instead of collapsing to the loading view: no jump, no resize. */
+  var shown = null;
   function render() {
-    var s = state;
+    var s = state, pending = false;
     if (!s) return;
+    if (s.current) shown = s;
+    else if (s.status === 'loading' && shown) { s = shown; pending = true; }
     root.classList.toggle('no-anim', !first);
-    var changed = W.mount(root, s, config(), { glass: document.documentElement.dataset.glass, places: places, refreshing: refreshing });
+    root.classList.toggle('is-locked', !!(settings && settings.lockPosition));
+    var changed = W.mount(root, s, config(), { glass: document.documentElement.dataset.glass, places: places, refreshing: refreshing || pending, pending: pending });
     if (changed) { W.fit(root, MAX_W, MAX_H); if (s.current) first = false; }
     reportSize();
     drawTray(s);
@@ -95,7 +101,10 @@
     if (act && act.dataset.action === 'next-place') { nextPlace(); return; }
     var el = target.closest && target.closest('[data-open]');
     window.sky.openDetail(el ? el.dataset.open : 'overview');
-  });
+  }, function () { return !!(settings && settings.lockPosition); });
+
+  W.onMetrics = function () { root.__wvSig = null; render(); };
+  if (U.params.get('guides') === '1') root.classList.add('wv-guides'); /* design aid */
 
   U.watchVisibility();
 

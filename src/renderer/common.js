@@ -118,16 +118,22 @@
   }
 
   /* Pointer handling for widget + pill: drag moves the window, a press without movement is a click.
-     onClick(el) receives the element that was pressed. */
-  function dragOrClick(root, onClick) {
+     onClick(el) receives the element that was pressed. isLocked() -> true disables dragging.
+     Right-click asks main for the native context menu. */
+  function dragOrClick(root, onClick, isLocked) {
     var st = null;
+    root.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      if (window.sky && window.sky.showContextMenu) window.sky.showContextMenu();
+    });
     root.addEventListener('pointerdown', function (e) {
       if (e.button !== 0) return;
-      st = { id: e.pointerId, x: e.screenX, y: e.screenY, lx: e.screenX, ly: e.screenY, drag: false, target: e.target };
+      st = { id: e.pointerId, x: e.screenX, y: e.screenY, lx: e.screenX, ly: e.screenY, drag: false, locked: !!(isLocked && isLocked()), target: e.target };
       try { root.setPointerCapture(e.pointerId); } catch (err) {}
     });
     root.addEventListener('pointermove', function (e) {
       if (!st || e.pointerId !== st.id) return;
+      if (st.locked) return;
       if (!st.drag) {
         if (Math.abs(e.screenX - st.x) <= 4 && Math.abs(e.screenY - st.y) <= 4) return;
         st.drag = true;

@@ -93,6 +93,18 @@
     }
   }
 
+  /* Visual extent of each icon's artwork inside its 64-unit box: [top, bottom] for day, night.
+     Used to size an icon optically against text (see widget-view.js). */
+  var BOUNDS = {
+    clear: [[7, 57], [12, 52.5]], 'mostly-clear': [[5.7, 50.3], [11.8, 50.3]], 'partly-cloudy': [[4.4, 51.2], [6.2, 51.2]],
+    cloudy: [[15.1, 53.2]], fog: [[10.1, 58.1]], drizzle: [[8.1, 54.1]], rain: [[7.1, 56.6]], 'heavy-rain': [[6.1, 58.6]],
+    thunderstorm: [[6.1, 60]], snow: [[6.1, 61.2]], sleet: [[7.1, 60.3]], wind: [[9.9, 55.7]]
+  };
+  function bounds(key, isDay) {
+    var b = BOUNDS[key] || BOUNDS.cloudy;
+    return b[isDay === false && b[1] ? 1 : 0];
+  }
+
   var SVG_OPEN = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">';
 
   function wx(key, isDay, opts) {
@@ -130,7 +142,7 @@
     home: '<path d="M3.5 9.2 10 3.600l6.5 5.600V16a.8.8 0 0 1-.8.8H12v-4.600H8v4.600H4.300a.8.8 0 0 1-.8-.8V9.200Z"/>',
     clock: '<circle cx="10" cy="10" r="6.8"/><path d="M10 6v4.200l2.8 1.7"/>',
     calendar: '<rect x="3.2" y="4.4" width="13.6" height="12.4" rx="2"/><path d="M3.2 8.400h13.600M7 2.800v3M13 2.800v3"/>',
-    gear: '<circle cx="10" cy="10" r="2.4"/><path d="M10 2.800l1.1 2 2.2-.5.7 2.1 2.1.9-.9 2 .9 2-2.1.9-.700 2.1-2.2-.500-1.1 2-1.1-2-2.2.500-.700-2.1-2.1-.900.9-2-.900-2 2.1-.900.7-2.1 2.2.500 1.1-2Z"/>',
+    gear: '<circle cx="10" cy="10" r="2.4"/><path d="M10 2.800l1.1 2 2.2-.5.7 2.1 2.1.9-.9 2 .9 2-2.1.9-.700 2.1-2.2-.500-1.1 2-1.1-2-2.2.5-.700-2.1-2.1-.900.9-2-.900-2 2.1-.900.7-2.1 2.2.5 1.1-2Z"/>',
     check: '<path d="m4.5 10.5 3.6 3.6 7.4-8"/>',
     'check-circle': '<circle cx="10" cy="10" r="7"/><path d="m6.8 10.2 2.3 2.3 4.2-4.6"/>',
     x: '<path d="m5 5 10 10M15 5 5 15"/>',
@@ -143,6 +155,12 @@
     bell: '<path d="M5.2 13.500V9a4.8 4.8 0 0 1 9.6 0v4.500l1.2 1.500H4l1.2-1.500ZM8.4 17a1.7 1.7 0 0 0 3.2 0"/>',
     layers: '<path d="m10 3.2 7 3.8-7 3.800L3 7l7-3.800ZM3.4 10.4 10 14l6.6-3.600M3.4 13.4 10 17l6.6-3.6"/>',
     rocket: '<path d="M10 2.800c2.6 1.8 3.6 4.6 3.6 7.200l-1.4 3H7.800l-1.4-3c0-2.6 1-5.4 3.6-7.200Z"/><circle cx="10" cy="8" r="1.3"/><path d="M8.6 15.2 10 17.400l1.4-2.2"/>',
+    brush: '<path d="M15.6 3.2a1.7 1.7 0 0 1 1.2 2.9l-6.5 6.5-2.9.6.6-2.9 6.5-6.5a1.7 1.7 0 0 1 1.1-.6Z"/><path d="M6.9 12.400c-1.8.200-2.5 1.3-2.7 2.8-.1.8-.5 1.2-1.2 1.5 2.4.700 5 .100 5.3-2.6"/>',
+    rows: '<rect x="3.5" y="3.5" width="13" height="5" rx="1.5"/><rect x="3.5" y="11.5" width="13" height="5" rx="1.5"/>',
+    cols: '<rect x="3.5" y="3.5" width="5" height="13" rx="1.5"/><rect x="11.5" y="3.5" width="5" height="13" rx="1.5"/>',
+    'al-left': '<path d="M4 5h12M4 10h7M4 15h10"/>',
+    'al-center': '<path d="M4 5h12M6.5 10h7M5 15h10"/>',
+    'al-right': '<path d="M4 5h12M9 10h7M6 15h10"/>',
     plus: '<path d="M10 4.5v11M4.5 10h11"/>',
     download: '<path d="M10 3.5v9M6.4 9.2 10 12.8l3.6-3.6M4 16h12"/>',
     restart: '<path d="M4 10a6 6 0 1 0 1.9-4.4"/><path d="M3.8 3.4v3.4h3.4"/>',
@@ -156,5 +174,5 @@
     return '<svg class="gl' + (cls ? ' ' + cls : '') + '" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (G[name] || '') + '</svg>';
   }
 
-  window.SkyIcons = { wx: wx, gl: gl, ensureDefs: ensureDefs, KEYS: ['clear', 'mostly-clear', 'partly-cloudy', 'cloudy', 'fog', 'drizzle', 'rain', 'heavy-rain', 'thunderstorm', 'snow', 'sleet', 'wind'] };
+  window.SkyIcons = { wx: wx, gl: gl, bounds: bounds, ensureDefs: ensureDefs, KEYS: ['clear', 'mostly-clear', 'partly-cloudy', 'cloudy', 'fog', 'drizzle', 'rain', 'heavy-rain', 'thunderstorm', 'snow', 'sleet', 'wind'] };
 })();

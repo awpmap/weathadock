@@ -3,7 +3,7 @@
    WDWidget.normalize(cfg)                      -> complete, valid config
    WDWidget.mount(root, state, cfg, opts)       -> renders into `root` (class "wv"); returns true if the DOM changed
    WDWidget.fit(root, maxW, maxH)               -> scales down if the content exceeds the given box
-   opts: { glass, places:{locations,activeZip}, refreshing, animate } */
+   opts: { glass, places:{locations,activeZip}, refreshing, animate, pending } */
 (function () {
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
@@ -35,6 +35,28 @@
 
   var UP = '<svg class="wv-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9V1.5M1.8 4.5 5 1.3l3.2 3.2"/></svg>';
   var DOWN = '<svg class="wv-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1v7.5M1.8 5.5 5 8.7l3.2-3.2"/></svg>';
+
+  /* ---------- optical metrics ----------
+     Digits are measured in the real font so an icon beside the big temperature can be sized to
+     the digits' height and centred on their optical middle (not on the line box). */
+  var metrics = null;
+  function measure() {
+    var cap = 0.715, shift = 0;
+    try {
+      var g = document.createElement('canvas').getContext('2d');
+      var fam = getComputedStyle(document.documentElement).getPropertyValue('--font') || 'system-ui, sans-serif';
+      g.font = '400 100px ' + fam;
+      var m = g.measureText('0');
+      if (m.actualBoundingBoxAscent > 40) {
+        cap = m.actualBoundingBoxAscent / 100;
+        if (m.fontBoundingBoxAscent != null) shift = ((m.fontBoundingBoxAscent - m.fontBoundingBoxDescent) / 100 - cap) / 2;
+      }
+    } catch (e) {}
+    metrics = { cap: cap, shift: shift };
+    return metrics;
+  }
+  function getMetrics() { return metrics || measure(); }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { var old = metrics; measure(); if (old && (Math.abs(old.cap - metrics.cap) > 0.004 || Math.abs(old.shift - metrics.shift) > 0.004) && window.WDWidget.onMetrics) window.WDWidget.onMetrics(); });
 
   function tzOf(s) { return s.location && s.location.timeZone; }
   function locName(s) { return s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'WeathaDock'; }
@@ -96,11 +118,21 @@
   }
   function tempPart(s) {
     var cur = s.current || {};
-    return '<div class="wv-temp">' + (cur.temp == null ? '–' : Math.round(cur.temp) + '<sup>°</sup>') + '</div>';
+    if (cur.temp == null) return '<div class="wv-temp">–</div>';
+    var t = Math.round(cur.temp);
+    return '<div class="wv-temp" role="text" aria-label="' + t + ' degrees">' + t + '<i class="wv-deg" aria-hidden="true"></i></div>';
   }
-  function iconPart(s, o) {
-    var cur = s.current || {};
-    return '<div class="wv-icon">' + I.wx(cur.icon || 'cloudy', cur.isDay !== false, { animated: o.animate !== false }) + '</div>';
+  /* paired = sits beside (or above) the big temperature: size to the digits and share their centre line */
+  function iconPart(s, o, paired) {
+    var cur = s.current || {}, key = cur.icon || 'cloudy', day = cur.isDay !== false, style = '';
+    if (paired) {
+      var m = getMetrics(), b = I.bounds(key, day);
+      var frac = Math.max(0.64, (b[1] - b[0]) / 64);            /* share of the box the artwork fills */
+      var k = m.cap / frac;                                      /* icon box size, in temperature font-sizes */
+      var off = ((b[0] + b[1]) / 2 - 32) / 64;                   /* artwork centre vs box centre, in box sizes */
+      style = ' style="--k:' + k.toFixed(4) + ';--dy:' + (m.shift - off * k).toFixed(4) + '"';
+    }
+    return '<div class="wv-icon' + (paired ? ' is-paired' : '') + '"' + style + '>' + I.wx(key, day, { animated: o.animate !== false }) + '</div>';
   }
   function current(s, c, o) {
     var sh = c.show, cur = s.current || {};
@@ -108,7 +140,7 @@
     if (!sh.icon && !sh.temp && !sh.condition && !meta) return '';
     var cls = 'wv-sec wv-now' + (sh.icon ? ' has-icon' : '') + (sh.temp ? ' has-temp' : '') + (!sh.temp && !sh.icon ? ' is-text' : '');
     return '<div class="' + cls + '" data-open="overview">' +
-      (sh.icon || sh.temp ? '<div class="wv-now-top">' + (sh.temp ? tempPart(s) : '') + (sh.icon ? iconPart(s, o) : '') + '</div>' : '') +
+      (sh.icon || sh.temp ? '<div class="wv-now-top">' + (sh.temp ? tempPart(s) : '') + (sh.icon ? iconPart(s, o, sh.temp) : '') + '</div>' : '') +
       (sh.condition && cur.condition ? '<div class="wv-cond">' + esc(cur.condition) + '</div>' : '') +
       (meta ? '<div class="wv-meta">' + meta + '</div>' : '') + '</div>';
   }
@@ -119,8 +151,7 @@
     if (sh.humidity && cur.humidity != null) out.push('<span class="wv-stat" title="Humidity">' + I.gl('humidity') + '<b>' + cur.humidity + '%</b></span>');
     if (sh.uv && cur.uvIndex != null) out.push('<span class="wv-stat" title="UV index">' + I.gl('sunny') + 'UV <b>' + cur.uvIndex + '</b></span>');
     if (sh.sun && (t.sunrise || t.sunset)) {
-      if (t.sunrise) out.push('<span class="wv-stat" title="Sunrise">' + I.gl('sunrise') + '<b>' + esc(U.time(t.sunrise, tz)) + '</b></span>');
-      if (t.sunset) out.push('<span class="wv-stat" title="Sunset">' + I.gl('sunset') + '<b>' + esc(U.time(t.sunset, tz)) + '</b></span>');
+      out.push('<span class="wv-stat" title="Sunrise and sunset">' + (t.sunrise ? I.gl('sunrise') + '<b>' + esc(U.time(t.sunrise, tz)) + '</b>' : '') + (t.sunset ? I.gl('sunset') + '<b>' + esc(U.time(t.sunset, tz)) + '</b>' : '') + '</span>');
     }
     return out;
   }
@@ -219,7 +250,7 @@
     /* inline: horizontal with no tall sections -> one slim row */
     if (horizontal && !hasTimeline && !hasHours && !hasDays) {
       var cur = s.current || {}, meta = metaParts(s, c), items = [];
-      if (sh.icon || sh.temp) items.push('<span class="wv-i-now" data-open="overview">' + (sh.icon ? iconPart(s, o) : '') + (sh.temp ? tempPart(s) : '') + '</span>');
+      if (sh.icon || sh.temp) items.push('<span class="wv-i-now" data-open="overview">' + (sh.icon ? iconPart(s, o, sh.temp) : '') + (sh.temp ? tempPart(s) : '') + '</span>');
       var st1 = (sh.condition && cur.condition ? '<span class="wv-cond">' + esc(cur.condition) + '</span>' : '') + (meta ? '<span class="wv-meta">' + meta + '</span>' : '');
       if (st1) items.push('<span class="wv-i-stack" data-open="overview">' + st1 + '</span>');
       var line = (sh.incoming || sh.timeline) ? incomingLine(s) : '';
@@ -274,15 +305,18 @@
     var c = normalize(cfg), r = build(state, c, opts);
     var glass = pick(opts.glass, ['none', 'clear', 'frosted'], 'none');
     var z = ZOOM[c.size] || 1;
-    var sig = [glass, c.orientation, c.size, c.align, c.ink, r.mode, r.minW, r.html].join('|');
+    var sig = [glass, c.orientation, c.size, c.align, c.ink, r.mode, r.minW, opts.pending ? 1 : 0, r.html].join('|');
     var changed = root.__wvSig !== sig;
     if (changed) {
       root.__wvSig = sig;
       root.classList.add('wv');
       root.dataset.glass = glass; root.dataset.ink = c.ink; root.dataset.orient = c.orientation;
       root.dataset.align = c.align; root.dataset.size = c.size; root.dataset.mode = r.mode;
+      var mt = getMetrics();
+      root.style.setProperty('--wv-cap', mt.cap.toFixed(4)); root.style.setProperty('--wv-shift', mt.shift.toFixed(4));
       root.innerHTML = '<div class="wv-panel" style="zoom:' + z + ';' + (r.minW ? 'min-width:' + r.minW + 'px;' : '') + '">' + r.html + '</div>';
       root.__wvZoom = z;
+      root.classList.toggle('is-pending', !!opts.pending);
     }
     return changed;
   }

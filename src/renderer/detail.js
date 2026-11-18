@@ -3,7 +3,7 @@
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var $ = function (id) { return document.getElementById(id); };
-  var SECTIONS = ['overview', 'hourly', 'daily', 'alerts', 'settings'];
+  var SECTIONS = ['overview', 'hourly', 'daily', 'alerts', 'widget', 'settings'];
   var state = null, settings = null, current = 'overview';
   var places = { locations: [], activeZip: null }, update = null, refreshing = false;
   var openDays = null;            // Set of expanded daily dates
@@ -555,6 +555,9 @@
     document.querySelectorAll('#looks .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.glass === glass ? 'true' : 'false'); });
     var lay = s.layout || 'full';
     document.querySelectorAll('#lays .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.layout === lay ? 'true' : 'false'); });
+    var ps = (window.WD_PRESETS || []).filter(function (p) { return p.id === s.layout; })[0];
+    $('cz-summary').textContent = (ps ? 'Using the \u201c' + ps.name + '\u201d style' : 'Using your own custom layout') + ' \u00b7 ' + ({ clear: 'tinted glass', frosted: 'frosted' }[s.glass] || 'transparent') + '.';
+    if (current === 'widget') window.WDCustomize.update(state, settings);
     $('covered-sub').textContent = s.coveredMode === 'taskbar'
       ? 'A small weather pill appears on the taskbar.'
       : 'The tray icon shows the current temperature.';
@@ -666,6 +669,7 @@
     renderHead();
     if (!state) return;
     renderSettingsState();
+    if (current === 'widget') { window.WDCustomize.update(state, settings); return; }
     if (current === 'settings') return;
     var el = $('sec-' + current);
     if (!hasData()) { el.innerHTML = placeholder(); return; }
@@ -676,6 +680,14 @@
   }
 
   U.watchVisibility();
+  window.WDCustomize.init($('sec-widget'), {
+    /* next: full settings object for instant UI; patch: what is sent to main */
+    commit: function (next, patch) {
+      settings = next; applySettings();
+      Promise.resolve(window.sky.setSettings(patch)).then(function (s) { if (s) { settings = s; applySettings(); } }).catch(function () {});
+    }
+  });
+
   U.ready().then(function (sky) {
     sky.onState(function (s) { state = s; hideTip(); renderSection(); });
     sky.onSettings(function (s) { settings = s; applySettings(); });

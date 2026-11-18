@@ -26,6 +26,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => openDetail('overview'));
 }
 app.setAppUserModelId('app.weathadock.desktop');
+// Keep the footprint small: this is a mostly static widget, so it does not need a GPU process
+// or the Chromium extras below.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-features', 'SpareRendererForSitePerProcess,CalculateNativeWinOcclusion,MediaRouter,Translate,OptimizationHints,BackForwardCache');
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('js-flags', '--lite-mode');
 
 let store;
 let tray = null;
@@ -81,7 +88,7 @@ function load(win, page, extra = {}) {
 
 const webPreferences = () => ({
   preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false,
-  backgroundThrottling: false,
+  backgroundThrottling: false, spellcheck: false, enableWebSQL: false, webgl: false,
 });
 
 // Options that make a window see-through: true transparency ("clear") or OS acrylic ("frosted").
@@ -350,6 +357,13 @@ function createPill() {
   placePill();
 }
 
+// The taskbar pill has its own renderer process, so it only exists in 'taskbar' mode.
+function syncPill() {
+  const wanted = store.get('coveredMode') === 'taskbar';
+  if (wanted && !alive(pill)) createPill();
+  if (!wanted && alive(pill)) { pill.destroy(); pill = null; }
+}
+
 function setPillVisible(visible) {
   if (!alive(pill) || pill.isVisible() === visible) return;
   if (visible) {
@@ -413,7 +427,7 @@ function rebuildGlassWindows() {
 
 function startApp() {
   if (!alive(widget)) createWidget();
-  if (!alive(pill)) createPill();
+  syncPill();
   scheduleRefresh();
   refresh();
   startTicking();
@@ -434,7 +448,7 @@ function isFullscreen(rect) {
 }
 
 function tick() {
-  if (!alive(widget) || !alive(pill)) return;
+  if (!alive(widget)) return;
   const wantPillMode = store.get('coveredMode') === 'taskbar';
   const widgetOn = store.get('showWidget');
   let snap;
@@ -461,7 +475,7 @@ function tick() {
   const fullscreenApp = !snap.desktopForeground && !snap.fgIsOurs && isFullscreen(snap.fgRect);
   const showPill = covered && wantPillMode && !fullscreenApp;
   setPillVisible(showPill);
-  if (showPill) native.keepOnTop(native.hwndOf(pill)); // the taskbar likes to climb back over it
+  if (showPill && alive(pill)) native.keepOnTop(native.hwndOf(pill)); // the taskbar likes to climb back over it
 }
 
 function startTicking() {
@@ -490,7 +504,7 @@ async function applySettings(patch) {
   if (after.showWidget !== before.showWidget && alive(widget)) {
     if (after.showWidget) showWidget(); else widget.hide();
   }
-  if (after.coveredMode !== before.coveredMode) { applyTrayImage(); if (after.coveredMode === 'tray') setPillVisible(false); }
+  if (after.coveredMode !== before.coveredMode) { applyTrayImage(); syncPill(); }
   broadcast('sky:settings', after);
   updateTray();
   return after;

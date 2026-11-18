@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="sky" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#5CB8FF"/>
+      <stop offset="0.55" stop-color="#2F86F2"/>
+      <stop offset="1" stop-color="#1B55D6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.66" cy="0.34" r="0.6">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.38"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sun" cx="0.38" cy="0.32" r="0.8">
+      <stop offset="0" stop-color="#FFF3A6"/>
+      <stop offset="0.55" stop-color="#FFCC45"/>
+      <stop offset="1" stop-color="#FF9D1C"/>
+    </radialGradient>
+    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D3E2F7"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="tile"><rect x="32" y="32" width="960" height="960" rx="224"/></clipPath>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="220%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#0B2E7A" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <!-- tile -->
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#sky)"/>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#glow)"/>
+  <rect x="38" y="38" width="948" height="948" rx="218" fill="none" stroke="url(#edge)" stroke-width="12"/>
+  <!-- sun -->
+  <circle cx="672" cy="374" r="192" fill="url(#sun)"/>
+  <!-- cloud (same silhouette as the in-app weather icons) -->
+  <g clip-path="url(#tile)"><path filter="url(#soft)" fill="url(#cloud)"
+        transform="translate(42 122) scale(14.8)"
+        d="M19 48H44A10 10 0 0 0 46.6 28.3 14.6 14.6 0 0 0 17.4 30.1 9 9 0 0 0 19 48Z"/></g>
+</svg>

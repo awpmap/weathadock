@@ -23,24 +23,29 @@
     <input class="field su-zip" id="zip" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="00000" aria-describedby="zip-status">
     <div class="su-status"><span class="inline-status" id="zip-status" aria-live="polite"></span></div>
 
-    <div class="su-label" id="look-label">Choose a look</div>
-    <div class="looks" role="radiogroup" aria-labelledby="look-label" id="looks">
-      <button type="button" class="look" role="radio" data-glass="clear" aria-checked="true">
+    <div class="su-label" id="look-label">Choose how the desktop widget looks</div>
+    <div class="looks looks-3" role="radiogroup" aria-labelledby="look-label" id="looks">
+      <button type="button" class="look" role="radio" data-glass="none" aria-checked="true">
+        <span class="look-prev"><span class="look-mini is-none"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+        <span class="look-name"><i class="look-radio"></i>Transparent</span>
+        <span class="look-desc">Floats right on your wallpaper.</span>
+      </button>
+      <button type="button" class="look" role="radio" data-glass="clear" aria-checked="false">
         <span class="look-prev"><span class="look-mini is-clear"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
-        <span class="look-name"><i class="look-radio"></i>Clear</span>
-        <span class="look-desc">See-through, tinted glass.</span>
+        <span class="look-name"><i class="look-radio"></i>Tinted glass</span>
+        <span class="look-desc">Dark see-through panel.</span>
       </button>
       <button type="button" class="look" role="radio" data-glass="frosted" aria-checked="false">
         <span class="look-prev"><span class="look-mini is-frosted"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
         <span class="look-name"><i class="look-radio"></i>Frosted</span>
-        <span class="look-desc">Soft blur, like Windows 11.</span>
+        <span class="look-desc">Soft blur behind it.</span>
       </button>
     </div>
 
     <div class="su-foot">
       <button class="btn is-primary is-lg su-start" id="start" type="submit" disabled>Start</button>
       <div class="su-error" id="error" role="alert" hidden></div>
-      <p class="su-note" id="note">You can change both later in Settings. Forecasts and alerts come from the National Weather Service and Open-Meteo.</p>
+      <p class="su-note" id="note">You can add more places and change the look later in Settings. Forecasts and alerts come from the National Weather Service and Open-Meteo.</p>
     </div>
   </form>
 </div>

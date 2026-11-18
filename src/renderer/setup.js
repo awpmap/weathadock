@@ -4,7 +4,8 @@
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var $ = function (id) { return document.getElementById(id); };
   var zip = $('zip'), status = $('zip-status'), start = $('start'), err = $('error');
-  var glass = document.documentElement.dataset.glass === 'frosted' ? 'frosted' : 'clear';
+  var LOOKS = ['none', 'clear', 'frosted'];
+  var glass = 'none'; /* Transparent is the default look */
   var resolved = null, token = 0, timer = null, busy = false;
 
   $('mark').innerHTML = I.wx('partly-cloudy', true, { animated: true });
@@ -27,7 +28,8 @@
   $('looks').addEventListener('keydown', function (e) {
     if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].indexOf(e.key) < 0) return;
     e.preventDefault();
-    pickLook(glass === 'clear' ? 'frosted' : 'clear');
+    var step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : LOOKS.length - 1;
+    pickLook(LOOKS[(LOOKS.indexOf(glass) + step) % LOOKS.length]);
     document.querySelector('#looks .look[aria-checked="true"]').focus();
   });
   pickLook(glass);

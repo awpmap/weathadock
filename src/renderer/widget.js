@@ -18,7 +18,7 @@
     var more = s.alerts.length > 1 ? '<span class="w-alert-more">+' + (s.alerts.length - 1) + '</span>' : '';
     return '<div class="w-alert sev-' + U.sev(a) + '" data-open="alerts" role="button" aria-label="' + esc(a.event) + ', open alerts">' +
       '<span class="w-alert-ic">' + I.gl('alert') + '</span>' +
-      '<span class="w-alert-tx"><div class="w-alert-ev">' + esc(a.event) + '</div><div class="w-alert-sub">' + esc(sub) + '</div></span>' +
+      '<span class="w-alert-tx"><div class="w-alert-ev" title="' + esc(a.event) + '">' + esc(a.event) + '</div><div class="w-alert-sub">' + esc(sub) + '</div></span>' +
       more + '<span class="w-alert-chev">' + I.gl('chevron-right') + '</span></div>';
   }
 
@@ -40,10 +40,10 @@
     var loc = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'Skylight';
     var dots = placeDots();
     var upd;
-    if (s.stale) upd = '<span class="w-upd is-stale" title="' + esc(s.error || '') + '"><i class="w-dot"></i>Offline · ' + (short ? '' : 'as of ') + esc(U.time(s.updatedAt, tz)) + '</span>';
+    if (s.stale) upd = '<span class="w-upd is-stale" title="' + esc(s.error || '') + '"><i class="w-dot"></i>Offline' + (short ? '' : ' · as of ' + esc(U.time(s.updatedAt, tz))) + '</span>';
     else if (refreshing || s.status === 'loading') upd = '<span class="w-upd">Updating…</span>';
     else upd = '<span class="w-upd">' + (s.updatedAt ? (short ? '' : 'Updated ') + esc(U.time(s.updatedAt, tz)) : '') + '</span>';
-    return '<div class="sec w-top" data-open="overview"><div class="w-loc"' + (dots ? ' data-action="next-place" role="button" title="Switch location" aria-label="' + loc + ', switch location"' : '') + '>' +
+    return '<div class="sec w-top" data-open="overview"><div class="w-loc"' + (dots ? ' data-action="next-place" role="button" title="' + loc + ' \u2013 click to switch location" aria-label="' + loc + ', switch location"' : ' title="' + loc + '"') + '>' +
       I.gl('pin') + '<span>' + loc + '</span>' + dots + '</div><div class="w-right">' + upd + refreshBtn(s) + '</div></div>';
   }
 

@@ -36,6 +36,16 @@ body { background: var(--glass-detail); }
 .head-loc { display: flex; align-items: center; gap: 8px; height: 34px; margin-left: -10px; padding: 0 8px 0 10px; border-radius: 9px; font-size: 15px; font-weight: 600; min-width: 0; white-space: nowrap; transition: background 0.14s; }
 .head-loc:hover, .head-loc[aria-expanded="true"] { background: var(--fill-2); }
 .head-loc .gl { font-size: 16px; color: var(--t2); }
+.head-loc > span { overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
+.head-place { flex: 0 1 auto; }
+.head-upd { flex: none; }
+.menu-i > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu { max-width: 360px; }
+.loc-pick > span { min-width: 0; }
+.loc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-i:active { background: var(--fill-1); }
+.ov-alert-ev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.al-ev { overflow-wrap: anywhere; }
 .head-loc small { font-size: 12px; font-weight: 400; color: var(--t3); }
 .head-loc .head-chev { font-size: 13px; color: var(--t3); margin-left: -2px; }
 .menu { position: absolute; left: -10px; top: 40px; z-index: 30; min-width: 250px; padding: 6px; border-radius: 12px; background: #232b3b; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12), 0 14px 36px rgba(0, 0, 0, 0.5); animation: sk-in 0.18s var(--ease) both; }

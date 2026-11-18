@@ -290,7 +290,7 @@
     };
   }
 
-  var places = params.get('setup') === '1' ? [] : [{ zip: '62701', city: 'Springfield', state: 'IL' }];
+  var places = params.get('setup') === '1' ? [] : [{ zip: '62701', city: params.get('long') === '1' ? 'Rancho Santa Margarita Heights' : 'Springfield', state: 'IL' }];
   if (places.length && params.get('places') !== '1') places.push({ zip: '80202', city: 'Denver', state: 'CO' });
   var activeZip = places.length ? places[0].zip : null;
   /* the second, third... place shows a different scenario so switching is visible */
@@ -305,7 +305,15 @@
     }
     return st;
   }
-  function buildFor(zip) { useZip(zip || '62701'); return withStale(build(scenarioFor(zip))); }
+  function buildFor(zip) {
+    useZip(zip || '62701');
+    var st = withStale(build(scenarioFor(zip)));
+    if (params.get('long') === '1' && st.location) {   /* design aid: stress truncation */
+      st.location.city = 'Rancho Santa Margarita Heights';
+      if (st.alerts.length) st.alerts[0].event = 'Particularly Dangerous Situation Severe Thunderstorm Warning';
+    }
+    return st;
+  }
 
   var LAYOUTS = ['full', 'compact', 'wide', 'minimal'];
   var gp = params.get('glass');

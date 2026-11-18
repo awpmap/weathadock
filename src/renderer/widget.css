@@ -143,7 +143,9 @@ body { text-shadow: var(--shadow-text); width: max-content; }
 .w-col + .w-col::before { content: ""; position: absolute; left: 0; top: 16px; bottom: 14px; width: 1px; background: var(--line); }
 .w-col-mid { padding-top: 6px; }
 .w-col-days { padding-top: 8px; }
-.w-col-days .w-d { grid-template-columns: 44px 26px 36px 30px 1fr 30px; }
+.w-col-days .w-d { grid-template-columns: 44px 26px 42px 30px 1fr 30px; }
+.lay-wide .w-inc-sub { display: none; }
+.lay-wide .w-inc-row > span:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lay-wide .w-hero { padding-bottom: 14px; }
 .lay-wide .w-temp { font-size: 76px; }
 .lay-wide .w-icon { font-size: 88px; }

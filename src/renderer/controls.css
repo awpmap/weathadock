@@ -14,6 +14,10 @@
 .btn.is-primary:hover { background: #9ed2ff; }
 .btn.is-danger:hover { background: rgba(255, 90, 100, 0.22); box-shadow: inset 0 0 0 1px rgba(255, 110, 120, 0.5); }
 .btn:disabled { opacity: 0.42; pointer-events: none; }
+.btn.is-busy:disabled { opacity: 0.72; }
+.look:active { transform: scale(0.985); }
+.seg button:active { transform: scale(0.97); }
+.switch:active::after { width: 15px; }
 .btn.is-lg { height: 44px; padding: 0 22px; font-size: 15px; border-radius: 11px; }
 
 :focus { outline: none; }

@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .design-scratch/
+settings.json
+*.local.json
+.env*

@@ -87,7 +87,7 @@ jobs:
           # Third run: docked on the taskbar. Record the bottom strip of the screen at full size.
           Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
-          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"placement":"taskbar"}' | Set-Content (Join-Path $cfg 'settings.json')
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"placement":"taskbar","mouseBattery":true}' | Set-Content (Join-Path $cfg 'settings.json')
           $env:WEATHADOCK_LOG = Join-Path $env:TEMP 'weathadock.log'
           $dock = Start-Process -FilePath target/release/weathadock.exe -PassThru
           Start-Sleep -Seconds 20
@@ -108,6 +108,7 @@ jobs:
           Write-Output "SCREENSHOT4-BEGIN"
           [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock-desktop.jpg")) -split '(.{4000})' | Where-Object { $_ }
           Write-Output "SCREENSHOT4-END"
+          if ($dock.HasExited) { Write-Error "WeathaDock (taskbar placement, mouse battery on) exited early with code $($dock.ExitCode)"; exit 1 }
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { "TRACE $_" }
           $env:WEATHADOCK_LOG = $null

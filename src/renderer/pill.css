@@ -83,3 +83,9 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 [data-bar="light"][data-glass="none"] .d-tx span { color: #4a5261; }
 [data-bar="light"][data-glass="none"] .p-sep { background: rgba(0, 0, 0, 0.28); box-shadow: none; }
 [data-bar="light"][data-glass="none"] .pill .wx svg, [data-bar="light"][data-glass="none"] .p-hint .gl, [data-bar="light"][data-glass="none"] .p-muted .gl { filter: drop-shadow(0 0.5px 0.5px rgba(0, 0, 0, 0.25)); }
+
+/* mouse battery: same icon + two-line block as the hours */
+.d-batt .gl { font-size: 19px; flex: none; }
+.d-batt.is-low b, .d-batt.is-low .gl { color: #ff7a6b; }
+[data-bar="light"][data-glass="none"] .d-batt.is-low b, [data-bar="light"][data-glass="none"] .d-batt.is-low .gl { color: #c8321f; }
+.pill.is-dock:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) .d-bsep { display: block; }

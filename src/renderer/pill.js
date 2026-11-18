@@ -3,7 +3,7 @@
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var root = document.getElementById('root');
-  var state = null, last = '', dock = false, wantDock = false, room = 0, opt = { condition: true, highLow: true, hint: true, hours: 4 };
+  var state = null, last = '', dock = false, wantDock = false, room = 0, opt = { condition: true, highLow: true, hint: true, hours: 4 }, batt = null;
 
   function shortEvent(ev) {
     /* "Severe Thunderstorm Warning" -> "Severe T-Storm Warning"; keep the official wording otherwise */
@@ -42,6 +42,8 @@
         if (hs.length) html += '<i class="p-sep"></i><span class="d-hours" data-open="hourly">' + hs.map(function (h) {
           return '<span class="d-h">' + I.wx(h.icon, h.isDay) + '<span class="d-tx"><b>' + U.deg(h.temp) + '</b><span>' + esc(U.hour(h.time, tz)) + '</span></span></span>';
         }).join('') + '</span>';
+        if (batt) html += '<i class="p-sep d-bsep"></i><span class="d-h d-batt' + (batt.low ? ' is-low' : '') + '" title="Mouse battery">' + I.gl('mouse') +
+          '<span class="d-tx"><b>' + batt.percent + '%</b><span>' + (batt.charging ? 'Charging' : 'Mouse') + '</span></span></span>';
       }
     }
     var sig = cls + html;
@@ -83,6 +85,7 @@
     }
     sky.onSettings(place);
     sky.getSettings().then(place);
+    if (sky.onBattery) { var power = function (b) { batt = b && b.percent != null ? b : null; last = ''; render(); }; sky.onBattery(power); sky.getBattery().then(power); }
     if (sky.onDock) { sky.onDock(bar); sky.getDock().then(bar); }
     sky.onState(function (s) { state = s; render(); });
     sky.getState().then(function (s) { state = s; render(); });

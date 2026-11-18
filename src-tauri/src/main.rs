@@ -2,6 +2,8 @@
 //! WeathaDock: a transparent desktop weather widget with tray and taskbar presence.
 //! This file owns the windows, tray, settings, refresh schedule and desktop/taskbar switching.
 
+#[cfg(windows)]
+mod hidpp;
 mod net;
 mod updater;
 #[cfg(windows)]
@@ -49,6 +51,11 @@ struct Shared {
     /// window label -> intended size (physical px)
     sizes: Mutex<HashMap<String, (u32, u32)>>,
     tray_number: Mutex<Option<Vec<u8>>>,
+    /// Mouse battery: last reading as (percent, charging), when it was last tried, and whether the
+    /// low-battery notice has been shown for this discharge.
+    battery: Mutex<Option<(u8, bool)>>,
+    battery_tried: Mutex<i64>,
+    battery_warned: AtomicBool,
     /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
     dock: Mutex<(u32, bool)>,
     pending_section: Mutex<Option<String>>,
@@ -223,6 +230,7 @@ fn start_scheduler(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(20)).await;
+            check_battery(&app, false);
             if active_location(&app).is_none() {
                 continue;
             }
@@ -233,6 +241,52 @@ fn start_scheduler(app: &AppHandle) {
             if due {
                 refresh(&app).await;
             }
+        }
+    });
+}
+
+const BATTERY_EVERY_MS: i64 = 5 * 60_000;
+const BATTERY_LOW: u8 = 15;
+
+fn battery_info(app: &AppHandle) -> Value {
+    match *shared(app).battery.lock().unwrap() {
+        Some((percent, charging)) if flag(app, "mouseBattery") => json!({ "percent": percent, "charging": charging, "low": percent <= BATTERY_LOW && !charging }),
+        _ => Value::Null,
+    }
+}
+
+/// Read the mouse battery when the option is on: every few minutes, or right away with `now`.
+/// The last reading is kept while the mouse is asleep, so the number does not come and go.
+fn check_battery(app: &AppHandle, now: bool) {
+    let st = shared(app);
+    if !flag(app, "mouseBattery") {
+        return;
+    }
+    {
+        let mut tried = st.battery_tried.lock().unwrap();
+        if !now && now_ms() - *tried < BATTERY_EVERY_MS {
+            return;
+        }
+        *tried = now_ms();
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        #[cfg(windows)]
+        let reading = hidpp::mouse_battery().map(|b| (b.percent, b.charging));
+        #[cfg(not(windows))]
+        let reading: Option<(u8, bool)> = None;
+        trace(format!("mouse battery -> {reading:?}"));
+        let st = shared(&app);
+        let Some((percent, charging)) = reading else { return };
+        let changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
+        if charging || percent > BATTERY_LOW + 5 {
+            st.battery_warned.store(false, Ordering::Relaxed);
+        } else if percent <= BATTERY_LOW && !st.battery_warned.swap(true, Ordering::Relaxed) {
+            let _ = app.notification().builder().title("Mouse battery low").body(format!("Your mouse is at {percent}%. Time to charge it.")).show();
+        }
+        if changed {
+            let _ = app.emit("sky:battery", battery_info(&app));
+            update_tray(&app);
         }
     });
 }
@@ -282,6 +336,9 @@ fn tray_tooltip(app: &AppHandle) -> String {
     if let Some(alerts) = s["alerts"].as_array().filter(|a| !a.is_empty()) {
         let more = if alerts.len() > 1 { format!(" +{}", alerts.len() - 1) } else { String::new() };
         parts.push(format!("⚠ {}{more}", alerts[0]["event"].as_str().unwrap_or("Alert")));
+    }
+    if let Some(percent) = battery_info(app)["percent"].as_u64() {
+        parts.push(format!("Mouse battery {percent}%"));
     }
     // Windows limits tray tooltips to 127 characters.
     parts.join("\n").chars().take(127).collect()
@@ -849,6 +906,10 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
             place_pill(app);
         });
     }
+    if changed("mouseBattery") {
+        let _ = app.emit("sky:battery", battery_info(app));
+        check_battery(app, true);
+    }
     publish_settings(app);
 }
 
@@ -1136,6 +1197,11 @@ fn dock_info(app: &AppHandle) -> Value {
 }
 
 #[tauri::command]
+fn get_battery(app: AppHandle) -> Value {
+    battery_info(&app)
+}
+
+#[tauri::command]
 fn get_dock(app: AppHandle) -> Value {
     // Measure now: the strip's page can ask before the window has been placed for the first time.
     let _ = pill_geometry(&app, 0);
@@ -1176,7 +1242,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state, get_settings, set_settings, get_locations, lookup_zip, add_location, remove_location,
             set_active_location, complete_setup, refresh_now, open_detail_cmd, take_pending_section, window_control,
-            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_update_state,
+            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_battery, get_update_state,
             check_for_updates, install_update, quit_cmd
         ])
         .setup(|app| {
@@ -1201,6 +1267,9 @@ fn main() {
                 sizes: Mutex::new(HashMap::new()),
                 tray_number: Mutex::new(None),
                 dock: Mutex::new((0, false)),
+                battery: Mutex::new(None),
+                battery_tried: Mutex::new(0),
+                battery_warned: AtomicBool::new(false),
                 pending_section: Mutex::new(None),
                 covered: Mutex::new(Covered::default()),
                 quitting: AtomicBool::new(false),
@@ -1215,6 +1284,7 @@ fn main() {
                 open_setup(&handle);
             }
             start_scheduler(&handle);
+            check_battery(&handle, true);
             start_ticking(&handle);
             // Look for updates shortly after launch and then every six hours.
             let updates = handle.clone();

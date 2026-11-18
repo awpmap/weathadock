@@ -459,6 +459,8 @@
     windowControl: function (action) { log('windowControl', action); },
     moveBy: function (dx, dy) { log('moveBy', dx, dy); },
     dragEnd: function () { log('dragEnd'); },
+    getBattery: function () { var b = params.get('battery'); return Promise.resolve(b ? { percent: Number(b), charging: params.get('charging') === '1', low: Number(b) <= 15 && params.get('charging') !== '1' } : null); },
+    onBattery: function () {},
     getDock: function () { return Promise.resolve({ room: Number(params.get('room') || 0), light: params.get('bar') === 'light' }); },
     onDock: function () {},
     showContextMenu: function () { window.__contextMenus = (window.__contextMenus || 0) + 1; log('showContextMenu'); },

@@ -3,9 +3,9 @@
 
 use serde_json::{json, Map, Value};
 
-const PUBLIC_KEYS: [&str; 16] = [
+const PUBLIC_KEYS: [&str; 17] = [
     "glass", "layout", "widget", "widgetSet", "lockPosition", "snapToEdges", "widgetOnTop", "widgetOpacity",
-    "coveredMode", "placement", "taskbar", "showWidget", "launchAtLogin", "alertNotifications", "refreshMinutes", "zip",
+    "coveredMode", "placement", "taskbar", "showWidget", "launchAtLogin", "alertNotifications", "mouseBattery", "refreshMinutes", "zip",
 ];
 const SHOW_KEYS: [&str; 17] = [
     "location", "updated", "refresh", "icon", "temp", "condition", "highLow", "feelsLike", "incoming", "timeline",
@@ -37,6 +37,7 @@ pub fn defaults() -> Value {
         "coveredMode": "tray",      // while apps cover the widget: tray temperature | taskbar pill
         "showWidget": true, "lockPosition": false, "snapToEdges": true, "widgetOnTop": false, "widgetOpacity": 100,
         "launchAtLogin": true, "alertNotifications": true, "refreshMinutes": 10,
+        "mouseBattery": false,      // show a Logitech wireless mouse's battery level
         "widgetPos": null, "pillPos": null, "detailBounds": null, "notifiedAlerts": [],
     })
 }
@@ -101,7 +102,7 @@ pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
     pick("coveredMode", &[json!("taskbar"), json!("tray")]);
     pick("placement", &[json!("desktop"), json!("taskbar")]);
     pick("refreshMinutes", &[json!(5), json!(10), json!(15), json!(30)]);
-    for key in ["showWidget", "launchAtLogin", "alertNotifications", "lockPosition", "snapToEdges", "widgetOnTop"] {
+    for key in ["showWidget", "launchAtLogin", "alertNotifications", "mouseBattery", "lockPosition", "snapToEdges", "widgetOnTop"] {
         if let Some(b) = patch[key].as_bool() {
             out.insert(key.to_string(), json!(b));
         }
@@ -157,7 +158,7 @@ pub fn load(stored: Option<Value>) -> Value {
     // Re-validate everything else so a hand-edited file cannot put the app in a bad state.
     let clean = sanitize_patch(&data.clone(), &data);
     let fallback = defaults();
-    for key in ["glass", "coveredMode", "placement", "refreshMinutes", "showWidget", "launchAtLogin", "alertNotifications",
+    for key in ["glass", "coveredMode", "placement", "refreshMinutes", "showWidget", "launchAtLogin", "alertNotifications", "mouseBattery",
         "lockPosition", "snapToEdges", "widgetOnTop", "widgetOpacity", "layout"] {
         data[key] = clean.get(key).cloned().unwrap_or_else(|| fallback[key].clone());
     }

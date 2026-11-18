@@ -556,6 +556,7 @@
     if (p && p.dataset.zip !== places.activeZip) pickPlace(p.dataset.zip);
   });
 
+  var battery = null;
   function applySettings() {
     var s = settings;
     if (!s) return;
@@ -568,6 +569,10 @@
     var ps = (window.WD_PRESETS || []).filter(function (p) { return p.id === s.layout; })[0];
     $('cz-summary').textContent = (ps ? 'Using the \u201c' + ps.name + '\u201d style' : 'Using your own custom layout') + ' \u00b7 ' + ({ clear: 'tinted glass', frosted: 'frosted' }[s.glass] || 'transparent') + '.';
     if (current === 'widget') window.WDCustomize.update(state, settings);
+    $('battery-sub').textContent = !s.mouseBattery
+      ? 'Show a Logitech wireless mouse\u2019s charge on the taskbar strip and in the tray tooltip.'
+      : battery ? 'Your mouse is at ' + battery.percent + '%' + (battery.charging ? ' and charging.' : '.')
+      : 'Looking for a Logitech wireless mouse. Move it to wake it up.';
     var docked = s.placement === 'taskbar';
     $('placement-sub').textContent = docked
       ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
@@ -712,6 +717,7 @@
   U.ready().then(function (sky) {
     sky.onState(function (s) { state = s; hideTip(); renderSection(); });
     sky.onSettings(function (s) { settings = s; applySettings(); });
+    if (sky.onBattery) { var power = function (b) { battery = b && b.percent != null ? b : null; applySettings(); }; sky.onBattery(power); sky.getBattery().then(power); }
     sky.onNavigate(function (sec) { go(sec); });
     sky.getSettings().then(function (s) { settings = s; applySettings(); });
     if (sky.onLocations) sky.onLocations(function (v) { if (v) { places = v; renderPlaces(); renderHead(); } });

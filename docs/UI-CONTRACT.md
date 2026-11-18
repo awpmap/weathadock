@@ -324,3 +324,8 @@ space left of the Start button. `sky.getDock()` / `sky.onDock(cb)` give `{ room,
 pixels available (0 when the taskbar has no free stretch, in which case the pill keeps its place by
 the tray) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
 chooses what the strip shows; patch it as a whole object. The pill drops hours, then the hint, then the words to fit.
+
+## Revision 6: mouse battery
+
+`Settings.mouseBattery: boolean` (default off). `sky.getBattery()` / `sky.onBattery(cb)` give
+`{ percent, charging, low } | null`, read from a Logitech wireless mouse over HID++ (see `hidpp.rs`).

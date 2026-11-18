@@ -1,0 +1,44 @@
+html, body { height: 100%; overflow: hidden; }
+body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: calc(100vh - 8px); max-height: 40px; min-height: 28px;
+  max-width: 280px;
+  padding: 0 13px 0 9px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(30, 36, 50, 0.74), rgba(16, 20, 30, 0.82));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  white-space: nowrap; cursor: pointer;
+  transition: background 0.15s var(--ease);
+}
+[data-glass="frosted"] .pill { background: linear-gradient(180deg, rgba(34, 40, 56, 0.62), rgba(18, 22, 32, 0.72)); }
+.pill:hover { background: linear-gradient(180deg, rgba(44, 52, 70, 0.8), rgba(24, 30, 42, 0.86)); }
+.pill.is-dragging { cursor: grabbing; }
+.pill.has-alert { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sev) 55%, rgba(255, 255, 255, 0.1)), inset 0 1px 0 rgba(255, 255, 255, 0.14); }
+
+.pill .wx { font-size: 24px; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.3)); }
+.p-temp { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-left: -2px; }
+.p-hl { font-size: 11.5px; color: var(--t2); display: inline-flex; gap: 5px; align-items: baseline; }
+.p-hl b { font-weight: 600; color: var(--t1); }
+.p-hl i { font-style: normal; color: var(--t4); }
+.p-sep { width: 1px; height: 14px; background: var(--line-strong); flex: none; }
+.p-hint { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--t1); min-width: 0; }
+.p-hint span { overflow: hidden; text-overflow: ellipsis; }
+.p-hint .gl { font-size: 13px; }
+.p-hint.k-rain .gl { color: #9bd3ff; }
+.p-hint.k-snow .gl { color: #fff; }
+.p-hint.k-mix .gl { color: #d0c6ff; }
+.p-hint.k-storm .gl { color: #ffd66e; }
+.p-alert {
+  display: inline-flex; align-items: center; gap: 5px; min-width: 0; height: 22px; padding: 0 9px 0 3px; margin-right: -7px;
+  border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  background: color-mix(in srgb, var(--sev) 26%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sev) 45%, transparent);
+}
+.p-alert:hover { background: color-mix(in srgb, var(--sev) 40%, transparent); }
+.p-alert span { overflow: hidden; text-overflow: ellipsis; }
+.p-alert-ic { width: 16px; height: 16px; border-radius: 50%; background: var(--sev); color: #1a1206; display: grid; place-items: center; font-size: 11px; flex: none; text-shadow: none; }
+.p-alert-ic .gl { stroke-width: 2; vertical-align: 0; }
+.p-muted { font-size: 12px; color: var(--t2); display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
+.p-muted .gl { font-size: 13px; }

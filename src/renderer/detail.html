@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>Skylight</title>
+<script src="boot.js"></script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="controls.css">
+<link rel="stylesheet" href="detail.css">
+</head>
+<body>
+<div class="app">
+  <header class="tb">
+    <div class="tb-brand"><span class="tb-logo" id="tb-logo"></span><span>Skylight</span></div>
+    <div class="winctl">
+      <button data-win="minimize" aria-label="Minimize"></button>
+      <button data-win="maximize" aria-label="Maximize"></button>
+      <button data-win="close" aria-label="Close"></button>
+    </div>
+  </header>
+  <div class="shell">
+    <nav class="nav" aria-label="Sections">
+      <div class="nav-items" role="tablist" aria-orientation="vertical">
+        <button class="nav-i" role="tab" data-sec="overview"><span class="nav-ic" data-gl="home"></span><span>Overview</span></button>
+        <button class="nav-i" role="tab" data-sec="hourly"><span class="nav-ic" data-gl="clock"></span><span>Hourly</span></button>
+        <button class="nav-i" role="tab" data-sec="daily"><span class="nav-ic" data-gl="calendar"></span><span>7-day</span></button>
+        <button class="nav-i" role="tab" data-sec="alerts"><span class="nav-ic" data-gl="alert"></span><span>Alerts</span><span class="nav-badge" id="nav-badge" hidden></span></button>
+      </div>
+      <div class="nav-foot">
+        <button class="nav-i" role="tab" data-sec="settings"><span class="nav-ic" data-gl="gear"></span><span>Settings</span></button>
+      </div>
+    </nav>
+    <main class="main" id="main">
+      <div class="head">
+        <div class="head-loc" id="head-loc"></div>
+        <div class="head-upd"><span id="head-upd"></span><button class="icon-btn" id="btn-refresh" aria-label="Refresh now" title="Refresh now"></button></div>
+      </div>
+      <div class="notice" id="notice" hidden></div>
+      <section class="page" id="sec-overview" role="tabpanel" hidden></section>
+      <section class="page" id="sec-hourly" role="tabpanel" hidden></section>
+      <section class="page" id="sec-daily" role="tabpanel" hidden></section>
+      <section class="page" id="sec-alerts" role="tabpanel" hidden></section>
+      <section class="page" id="sec-settings" role="tabpanel" hidden>
+        <h1 class="page-title">Settings</h1>
+
+        <h2 class="group-title">Location</h2>
+        <div class="card set">
+          <div class="set-row">
+            <span class="set-ic" data-gl="pin"></span>
+            <div class="set-tx"><label class="set-name" for="zip">ZIP code</label><div class="set-sub">US locations only. Forecasts and alerts follow this ZIP.</div></div>
+            <div class="zip-ctl">
+              <input class="field zip-in" id="zip" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="00000" aria-describedby="zip-status">
+              <button class="btn is-primary" id="zip-save" hidden>Use this location</button>
+            </div>
+          </div>
+          <div class="set-row set-row-sub"><span class="inline-status" id="zip-status" aria-live="polite"></span></div>
+        </div>
+
+        <h2 class="group-title">Appearance</h2>
+        <div class="card set">
+          <div class="set-block">
+            <div class="set-name">Glass style</div>
+            <div class="set-sub">How the desktop widget lets your wallpaper through.</div>
+            <div class="looks" role="radiogroup" aria-label="Glass style" id="looks">
+              <button class="look" role="radio" data-glass="clear">
+                <span class="look-prev"><span class="look-mini is-clear"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+                <span class="look-name"><i class="look-radio"></i>Clear</span>
+                <span class="look-desc">See-through tinted glass. Your wallpaper stays sharp behind it.</span>
+              </button>
+              <button class="look" role="radio" data-glass="frosted">
+                <span class="look-prev"><span class="look-mini is-frosted"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+                <span class="look-name"><i class="look-radio"></i>Frosted</span>
+                <span class="look-desc">Blurred acrylic, like Windows 11 panels. Calmer over busy wallpapers.</span>
+              </button>
+            </div>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="layers"></span>
+            <div class="set-tx"><div class="set-name">Show desktop widget</div><div class="set-sub">Keep the weather panel on your desktop.</div></div>
+            <button class="switch" role="switch" data-set="showWidget" aria-label="Show desktop widget"></button>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="cloud"></span>
+            <div class="set-tx"><div class="set-name">When apps cover the widget</div><div class="set-sub" id="covered-sub"></div></div>
+            <div class="seg" role="radiogroup" aria-label="When apps cover the widget" data-seg="coveredMode">
+              <button role="radio" data-val="taskbar">Taskbar + tray</button>
+              <button role="radio" data-val="tray">Tray only</button>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title">Behavior</h2>
+        <div class="card set">
+          <div class="set-row">
+            <span class="set-ic" data-gl="bell"></span>
+            <div class="set-tx"><div class="set-name">Alert notifications</div><div class="set-sub">Notify me when the National Weather Service issues a new alert for my area.</div></div>
+            <button class="switch" role="switch" data-set="alertNotifications" aria-label="Alert notifications"></button>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="rocket"></span>
+            <div class="set-tx"><div class="set-name">Launch at login</div><div class="set-sub">Start Skylight when you sign in to Windows.</div></div>
+            <button class="switch" role="switch" data-set="launchAtLogin" aria-label="Launch at login"></button>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="refresh"></span>
+            <div class="set-tx"><div class="set-name">Refresh every</div><div class="set-sub" id="set-updated"></div></div>
+            <div class="set-ctl">
+              <div class="seg" role="radiogroup" aria-label="Refresh interval" data-seg="refreshMinutes">
+                <button role="radio" data-val="5">5 min</button>
+                <button role="radio" data-val="10">10 min</button>
+                <button role="radio" data-val="15">15 min</button>
+                <button role="radio" data-val="30">30 min</button>
+              </div>
+              <button class="btn" id="set-refresh"><span data-gl="refresh"></span>Refresh now</button>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title">Data sources</h2>
+        <div class="card set">
+          <div class="set-row">
+            <span class="src-dot" id="src-nws"></span>
+            <div class="set-tx"><div class="set-name">National Weather Service</div><div class="set-sub">Forecasts, current observations and official alerts from NOAA / weather.gov.</div></div>
+            <span class="src-state" id="src-nws-tx"></span>
+          </div>
+          <div class="set-row">
+            <span class="src-dot" id="src-om"></span>
+            <div class="set-tx"><div class="set-name">Open-Meteo</div><div class="set-sub">Minute-by-minute precipitation and supplemental hourly data from open-meteo.com.</div></div>
+            <span class="src-state" id="src-om-tx"></span>
+          </div>
+        </div>
+
+        <div class="set-foot">
+          <span>Skylight is not affiliated with the National Weather Service. For life-threatening weather, follow official instructions.</span>
+          <button class="btn is-danger" id="set-quit"><span data-gl="power"></span>Quit Skylight</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+<div class="tip" id="tip" hidden></div>
+<script src="icons.js"></script>
+<script src="common.js"></script>
+<script src="detail.js"></script>
+</body>
+</html>

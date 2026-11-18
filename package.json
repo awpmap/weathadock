@@ -1,0 +1,51 @@
+{
+  "name": "skylight-weather",
+  "productName": "Skylight",
+  "version": "1.0.0",
+  "description": "A translucent desktop weather widget for Windows with taskbar and tray presence.",
+  "main": "src/main/main.js",
+  "author": "Skylight Weather",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "dist": "electron-builder --win nsis portable --x64",
+    "dist:zip": "electron-builder --win zip --x64 -c.win.signAndEditExecutable=false"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.skylight.weather",
+    "productName": "Skylight",
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json",
+      "!node_modules/koffi/{src,vendor,doc}/**",
+      "!node_modules/koffi/build/koffi/{darwin,linux,freebsd,openbsd,musl}*/**",
+      "!node_modules/koffi/build/koffi/win32_ia32/**"
+    ],
+    "asarUnpack": [
+      "node_modules/koffi/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Skylight-portable-${version}.exe"
+    }
+  }
+}

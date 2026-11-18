@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>Welcome to Skylight</title>
+<script src="boot.js"></script>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="controls.css">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<div class="su">
+  <header class="su-bar">
+    <div class="winctl"><button data-win="close" aria-label="Close"></button></div>
+  </header>
+  <form class="su-body" id="form" novalidate>
+    <div class="su-mark" id="mark"></div>
+    <h1>Welcome to Skylight</h1>
+    <p class="su-lead">Weather that sits quietly on your desktop.<br>Two quick choices and you’re done.</p>
+
+    <label class="su-label" for="zip">Your ZIP code</label>
+    <input class="field su-zip" id="zip" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="00000" aria-describedby="zip-status">
+    <div class="su-status"><span class="inline-status" id="zip-status" aria-live="polite"></span></div>
+
+    <div class="su-label" id="look-label">Choose a look</div>
+    <div class="looks" role="radiogroup" aria-labelledby="look-label" id="looks">
+      <button type="button" class="look" role="radio" data-glass="clear" aria-checked="true">
+        <span class="look-prev"><span class="look-mini is-clear"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+        <span class="look-name"><i class="look-radio"></i>Clear</span>
+        <span class="look-desc">See-through, tinted glass.</span>
+      </button>
+      <button type="button" class="look" role="radio" data-glass="frosted" aria-checked="false">
+        <span class="look-prev"><span class="look-mini is-frosted"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+        <span class="look-name"><i class="look-radio"></i>Frosted</span>
+        <span class="look-desc">Soft blur, like Windows 11.</span>
+      </button>
+    </div>
+
+    <div class="su-foot">
+      <button class="btn is-primary is-lg su-start" id="start" type="submit" disabled>Start</button>
+      <div class="su-error" id="error" role="alert" hidden></div>
+      <p class="su-note" id="note">You can change both later in Settings. Forecasts and alerts come from the National Weather Service and Open-Meteo.</p>
+    </div>
+  </form>
+</div>
+<script src="icons.js"></script>
+<script src="common.js"></script>
+<script src="setup.js"></script>
+</body>
+</html>

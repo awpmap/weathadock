@@ -1,0 +1,149 @@
+/* Skylight shared design tokens + primitives. One product across widget, pill, detail, setup. */
+:root {
+  --font: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+
+  /* ink */
+  --t1: rgba(255, 255, 255, 0.96);
+  --t2: rgba(255, 255, 255, 0.74);
+  --t3: rgba(255, 255, 255, 0.58);
+  --t4: rgba(255, 255, 255, 0.34);
+
+  /* surfaces on glass */
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --fill-1: rgba(255, 255, 255, 0.05);
+  --fill-2: rgba(255, 255, 255, 0.085);
+  --fill-3: rgba(255, 255, 255, 0.13);
+
+  /* glass tints */
+  --glass-clear: linear-gradient(180deg, rgba(24, 30, 43, 0.62) 0%, rgba(13, 17, 26, 0.74) 100%);
+  --glass-frosted: linear-gradient(180deg, rgba(20, 26, 38, 0.42) 0%, rgba(12, 16, 24, 0.54) 100%);
+  --glass-detail: rgba(16, 20, 28, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.13);
+
+  /* meaning */
+  --accent: #7cc0ff;
+  --accent-strong: #4ea8ff;
+  --rain: #5cb6ff;
+  --snow: #e9f2ff;
+  --mix: #b7a9ff;
+  --storm: #ffcc55;
+  --warm: #ffb84d;
+  --good: #6fdc9c;
+
+  --sev-extreme: #ff4f6d;
+  --sev-severe: #ff7a45;
+  --sev-moderate: #ffb638;
+  --sev-minor: #f0d74e;
+  --sev-unknown: #9db0c9;
+
+  --r-panel: 22px;
+  --r-card: 14px;
+  --r-ctl: 8px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --shadow-text: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--t1);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  cursor: default;
+}
+
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+input { font: inherit; color: inherit; }
+h1, h2, h3, p { margin: 0; }
+
+/* ---------- weather icons ---------- */
+.wx { position: relative; display: inline-block; width: 1em; height: 1em; flex: none; vertical-align: middle; }
+.wx svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; display: block; }
+.wx-layer { position: absolute; inset: 0; will-change: transform; }
+.gl { width: 1em; height: 1em; flex: none; display: inline-block; vertical-align: -0.14em; }
+
+@keyframes wx-spin { to { transform: rotate(360deg); } }
+@keyframes wx-drift { from { transform: translateX(-2.2%); } to { transform: translateX(2.2%); } }
+@keyframes wx-fall {
+  0% { transform: translate(1.5%, -7%); opacity: 0; }
+  25% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { transform: translate(-1.5%, 7%); opacity: 0; }
+}
+@keyframes wx-snow {
+  0% { transform: translate(-1%, -7%); opacity: 0; }
+  25% { opacity: 1; }
+  50% { transform: translate(1.5%, 0); }
+  75% { opacity: 1; }
+  100% { transform: translate(-1%, 7%); opacity: 0; }
+}
+@keyframes wx-flash { 0%, 86%, 100% { opacity: 1; } 89% { opacity: 0.25; } 92% { opacity: 1; } 95% { opacity: 0.4; } }
+@keyframes wx-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes wx-gust { from { transform: translateX(-3%); } to { transform: translateX(3%); } }
+
+.wx-anim .wx-a-spin { animation: wx-spin 90s linear infinite; }
+.wx-anim .wx-a-drift { animation: wx-drift 7s ease-in-out infinite alternate; }
+.wx-anim .wx-a-fall { animation: wx-fall 1.5s linear infinite; }
+.wx-anim .wx-a-fall-slow { animation: wx-fall 2.4s linear infinite; }
+.wx-anim .wx-a-snow { animation: wx-snow 3.6s linear infinite; }
+.wx-anim .wx-a-flash { animation: wx-flash 5s linear infinite; }
+.wx-anim .wx-a-twinkle { animation: wx-twinkle 4.5s ease-in-out infinite; }
+.wx-anim .wx-a-gust { animation: wx-gust 3.2s ease-in-out infinite alternate; }
+.is-hidden .wx-anim .wx-layer { animation-play-state: paused; }
+
+/* ---------- severity ---------- */
+.sev-Extreme { --sev: var(--sev-extreme); }
+.sev-Severe { --sev: var(--sev-severe); }
+.sev-Moderate { --sev: var(--sev-moderate); }
+.sev-Minor { --sev: var(--sev-minor); }
+.sev-Unknown { --sev: var(--sev-unknown); }
+
+/* ---------- shared bits ---------- */
+.spin { animation: sk-rot 0.9s linear infinite; }
+@keyframes sk-rot { to { transform: rotate(360deg); } }
+@keyframes sk-shimmer { from { background-position: 180% 0; } to { background-position: -80% 0; } }
+@keyframes sk-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.skel {
+  border-radius: 8px;
+  background: linear-gradient(100deg, rgba(255,255,255,0.07) 30%, rgba(255,255,255,0.16) 50%, rgba(255,255,255,0.07) 70%);
+  background-size: 220% 100%;
+  animation: sk-shimmer 1.8s ease-in-out infinite;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); background-clip: content-box; border: 3px solid transparent; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- precipitation timeline (shared: widget + detail) ---------- */
+.ptl { display: block; }
+.ptl-bars { display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--line-strong); }
+.ptl-bar { flex: 1; min-width: 0; border-radius: 2px 2px 0 0; background: var(--rain); display: block; }
+.ptl-bar.k-rain { background: linear-gradient(180deg, #8fd0ff, #469fff); }
+.ptl-bar.k-snow { background: linear-gradient(180deg, #ffffff, #cfe0f7); }
+.ptl-bar.k-mix { background: linear-gradient(180deg, #d3c9ff, #9d8cf5); }
+.ptl-bar.is-dry { background: rgba(255, 255, 255, 0.16); border-radius: 1px 1px 0 0; }
+.ptl-ticks { position: relative; height: 14px; margin-top: 5px; font-size: 10.5px; color: var(--t3); letter-spacing: 0.01em; }
+.ptl-ticks span { position: absolute; top: 0; white-space: nowrap; }
+.ptl-ticks .is-mid { transform: translateX(-50%); }
+.ptl-ticks .is-end { transform: translateX(-100%); }
+
+/* ---------- low-high temperature range bar ---------- */
+.range { position: relative; height: 5px; border-radius: 5px; background: rgba(255, 255, 255, 0.11); box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.12); }
+.range i { position: absolute; top: 0; bottom: 0; border-radius: 5px; min-width: 6px; }
+.range b { position: absolute; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(16, 20, 28, 0.75); }
+

@@ -212,10 +212,10 @@ pub fn taskbar_free_left() -> Option<(i32, i32)> {
 /// Whether Windows is set to a light taskbar ("Light" Windows mode).
 pub fn taskbar_is_light() -> bool {
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-    let mut value = 0u32;
+    let mut value = 1u32;
     let mut size = 4u32;
     unsafe {
-        RegGetValueW(
+        let _ = RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
             w!("SystemUsesLightTheme"),
@@ -224,7 +224,8 @@ pub fn taskbar_is_light() -> bool {
             Some(&mut value as *mut u32 as *mut core::ffi::c_void),
             Some(&mut size),
         )
-        .is_ok()
-            && value == 1
+        .is_ok();
     }
+    // Windows is light unless the value says otherwise (a missing value means the default, light).
+    value == 1
 }

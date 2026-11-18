@@ -545,6 +545,7 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
                     }
                 }
             }
+            trace(format!("pill_geometry docked={} dock={dock:?} spot={spot:?} scale={scale}", docked(app)));
             let changed = std::mem::replace(&mut *shared(app).dock.lock().unwrap(), dock) != dock;
             if changed {
                 let _ = app.emit("sky:dock", dock_info(app));
@@ -1119,6 +1120,16 @@ fn show_context_menu(app: AppHandle, window: WebviewWindow) {
     }
 }
 
+/// Troubleshooting aid: when WEATHADOCK_LOG names a file, placement decisions are appended to it.
+fn trace(line: String) {
+    if let Ok(path) = std::env::var("WEATHADOCK_LOG") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 fn dock_info(app: &AppHandle) -> Value {
     let (room, light) = *shared(app).dock.lock().unwrap();
     json!({ "room": room, "light": light })
@@ -1126,6 +1137,7 @@ fn dock_info(app: &AppHandle) -> Value {
 
 #[tauri::command]
 fn get_dock(app: AppHandle) -> Value {
+    trace(format!("get_dock -> {}", dock_info(&app)));
     dock_info(&app)
 }
 

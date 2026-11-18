@@ -68,6 +68,7 @@ struct Covered {
     covered: bool,
     votes: u8,
     desktop_was_foreground: bool,
+    fullscreen: bool,
 }
 
 // ---------------------------------------------------------------- settings
@@ -821,17 +822,22 @@ fn tick(app: &AppHandle) {
         c.votes = 0;
     }
     let covered = c.covered;
+    // A widget kept above other windows steps back while a game, video or presentation has the
+    // whole screen, and returns afterwards.
+    if snap.fullscreen != c.fullscreen {
+        c.fullscreen = snap.fullscreen;
+        trace(format!("fullscreen -> {}", snap.fullscreen));
+        if widget_on && on_top {
+            let _ = widget.set_always_on_top(!snap.fullscreen);
+            if snap.fullscreen {
+                win32::send_to_bottom(handle);
+            }
+        }
+    }
     drop(c);
 
     let Some(pill) = window(app, "pill") else { return };
-    let fullscreen = !snap.desktop_foreground
-        && !snap.foreground_is_ours
-        && snap.foreground_rect.map_or(false, |r| {
-            app.available_monitors().unwrap_or_default().iter().any(|m| {
-                let (p, s) = (m.position(), m.size());
-                r.left <= p.x && r.top <= p.y && r.right >= p.x + s.width as i32 && r.bottom >= p.y + s.height as i32
-            })
-        });
+    let fullscreen = snap.fullscreen;
     let show = covered && !fullscreen;
     set_pill_visible(app, show);
     if show {

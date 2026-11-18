@@ -108,6 +108,24 @@ jobs:
           Write-Output "SCREENSHOT4-BEGIN"
           [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock-desktop.jpg")) -split '(.{4000})' | Where-Object { $_ }
           Write-Output "SCREENSHOT4-END"
+          # A borderless window that fills the screen, like a game: the strip must get out of the way, then return.
+          @'
+          Add-Type -AssemblyName System.Windows.Forms
+          $f = New-Object Windows.Forms.Form
+          $f.FormBorderStyle = 'None'; $f.WindowState = 'Maximized'; $f.BackColor = 'Black'
+          $t = New-Object Windows.Forms.Timer; $t.Interval = 9000; $t.add_Tick({ $f.Close() }); $t.Start()
+          [Windows.Forms.Application]::Run($f)
+          '@ | Set-Content smoke/fullscreen.ps1
+          Start-Process pwsh -ArgumentList '-NoProfile', '-File', 'smoke/fullscreen.ps1'
+          foreach ($shot in 5, 6) {
+            Start-Sleep -Seconds $(if ($shot -eq 5) { 5 } else { 9 })
+            $strip = New-Object System.Drawing.Bitmap $b.Width, 160
+            [System.Drawing.Graphics]::FromImage($strip).CopyFromScreen(0, ($b.Height - 160), 0, 0, (New-Object System.Drawing.Size $b.Width, 160))
+            $strip.Save("smoke/fullscreen$shot.jpg", $jpeg, $q)
+            Write-Output "SCREENSHOT$shot-BEGIN"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/fullscreen$shot.jpg")) -split '(.{4000})' | Where-Object { $_ }
+            Write-Output "SCREENSHOT$shot-END"
+          }
           if ($dock.HasExited) { Write-Error "WeathaDock (taskbar placement, mouse battery on) exited early with code $($dock.ExitCode)"; exit 1 }
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { "TRACE $_" }

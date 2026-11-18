@@ -32,7 +32,37 @@ pub struct Snapshot {
     pub coverage: f64,
     pub desktop_foreground: bool,
     pub foreground_is_ours: bool,
-    pub foreground_rect: Option<Rect>,
+    /// A game, video or presentation has the whole screen.
+    pub fullscreen: bool,
+}
+
+/// Whether something is using the whole screen, so nothing of ours should sit on top of it.
+/// Asks Windows first (the same signal it uses to hold back notifications during games and
+/// presentations), then checks whether the window in use covers its entire monitor, which
+/// catches borderless-window games and full-screen video.
+fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> bool {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN};
+    unsafe {
+        if let Ok(state) = SHQueryUserNotificationState() {
+            if state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE || (state == QUNS_BUSY && !desktop && !ours) {
+                return true;
+            }
+        }
+        if fg.0.is_null() || desktop || ours {
+            return false;
+        }
+        let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+            return false;
+        }
+        let m = info.rcMonitor;
+        // Either measure of the window covering the monitor counts.
+        [rect_of(fg, true), rect_of(fg, false)]
+            .into_iter()
+            .flatten()
+            .any(|r| r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom)
+    }
 }
 
 fn rect_of(h: HWND, visible_bounds: bool) -> Option<Rect> {
@@ -125,11 +155,13 @@ pub fn snapshot(target: Handle) -> Snapshot {
     }
     let fg = unsafe { GetForegroundWindow() };
     let has_fg = !fg.0.is_null();
+    let desktop_foreground = has_fg && is_desktop_class(&class_of(fg));
+    let foreground_is_ours = has_fg && pid_of(fg) == me;
     Snapshot {
         coverage,
-        desktop_foreground: has_fg && is_desktop_class(&class_of(fg)),
-        foreground_is_ours: has_fg && pid_of(fg) == me,
-        foreground_rect: if has_fg { rect_of(fg, true) } else { None },
+        desktop_foreground,
+        foreground_is_ours,
+        fullscreen: fullscreen_now(fg, desktop_foreground, foreground_is_ours),
     }
 }
 

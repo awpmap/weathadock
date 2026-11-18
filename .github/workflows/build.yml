@@ -40,7 +40,7 @@ jobs:
         run: |
           $cfg = Join-Path $env:APPDATA 'app.weathadock.desktop'
           New-Item -ItemType Directory -Force -Path $cfg | Out-Null
-          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","coveredMode":"taskbar","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
           $app = Start-Process -FilePath target/release/weathadock.exe -PassThru
           Start-Sleep -Seconds 30
           New-Item -ItemType Directory -Force -Path smoke | Out-Null
@@ -49,6 +49,15 @@ jobs:
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("smoke/desktop.png")
+          # A small copy goes into the log so the result can be reviewed without downloading artifacts.
+          $small = New-Object System.Drawing.Bitmap $bmp, ([int]($b.Width * 0.75)), ([int]($b.Height * 0.75))
+          $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+          $q = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $q.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 55L
+          $small.Save("smoke/desktop.jpg", $jpeg, $q)
+          Write-Output "SCREENSHOT-BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/desktop.jpg")) -split '(.{4000})' | Where-Object { $_ }
+          Write-Output "SCREENSHOT-END"
           $report = @()
           $procs = Get-Process | Where-Object { $_.ProcessName -match 'weathadock|msedgewebview2' }
           foreach ($p in $procs) { $report += "{0,-22} private={1,6:N0} MB  working={2,6:N0} MB" -f $p.ProcessName, ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB) }
@@ -80,3 +89,23 @@ jobs:
             gh release create "v$version" "${{ steps.installer.outputs.file }}" --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" --title "WeathaDock $version" --notes-file RELEASE_NOTES.md
           fi
+
+  # One-off comparison: the same measurement for the last Electron-based release.
+  measure-electron:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[measure-electron]')
+    runs-on: windows-latest
+    steps:
+      - shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/awpmap/weathadock/releases/download/v1.0.1/WeathaDock-Setup-1.0.1.exe -OutFile setup.exe
+          Start-Process -FilePath ./setup.exe -ArgumentList '/S' -Wait
+          Get-Process WeathaDock -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 3
+          $cfg = Join-Path $env:APPDATA 'WeathaDock'
+          New-Item -ItemType Directory -Force -Path $cfg | Out-Null
+          '{"version":2,"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
+          Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'Programs\WeathaDock\WeathaDock.exe')
+          Start-Sleep -Seconds 30
+          $procs = Get-Process | Where-Object { $_.ProcessName -match '^WeathaDock$' }
+          foreach ($p in $procs) { "ELECTRON {0,-22} private={1,6:N0} MB  working={2,6:N0} MB" -f $p.ProcessName, ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB) }
+          "ELECTRON TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count

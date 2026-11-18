@@ -47,6 +47,18 @@
     },
     "portable": {
       "artifactName": "Skylight-portable-${version}.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "awpmap",
+        "repo": "weathadock",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/awpmap/weathadock.git"
   }
 }

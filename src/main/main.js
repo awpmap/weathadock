@@ -439,7 +439,7 @@ function startTicking() {
 // ---------------------------------------------------------------- settings
 
 async function applySettings(patch) {
-  const clean = sanitizePatch(patch);
+  const clean = sanitizePatch(patch, store.publicSettings());
   const before = { ...store.publicSettings() };
   store.set(clean);
   const after = store.publicSettings();

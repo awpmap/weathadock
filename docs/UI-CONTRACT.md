@@ -236,3 +236,48 @@ Settings gets an "Updates" group: current version, a "Check for updates" button,
 button when `ready`. `unsupported` means this copy cannot update itself (development run or the
 plain zip): say "Updates are available in the installed version" and hide the buttons. When
 `ready`, also show a small unobtrusive "Update ready" affordance in the detail window chrome.
+
+---
+
+# Revision 3: customizable widget (v1.1)
+
+`Settings.widget` is the single source of truth for what the desktop widget shows and how it is
+arranged. The four v1 layouts become presets that write this object; any manual change sets
+`Settings.layout` to `'custom'`.
+
+```ts
+type WidgetConfig = {
+  orientation: 'vertical' | 'horizontal'   // stack sections top to bottom, or flow them left to right
+  size: 'small' | 'medium' | 'large' | 'xlarge'   // overall scale of the widget
+  align: 'left' | 'center' | 'right'       // text/content alignment within the widget
+  ink: 'light' | 'dark'                    // light text for dark wallpapers, dark text (light halo) for bright ones
+  hours: 4 | 6 | 8 | 12                    // how many hours in the hourly strip
+  days: 3 | 5 | 7                          // how many days in the daily list
+  show: {                                  // every element is individually toggleable
+    location, updated, refresh, icon, temp, condition, highLow, feelsLike,
+    incoming,   // the "rain starting in 25 min" line
+    timeline,   // the precipitation bar chart
+    hourly, daily, alerts,
+    wind, humidity, uv, sun                // extra stats, off by default (sun = sunrise/sunset)
+  : boolean }
+}
+Settings.widget: WidgetConfig
+Settings.layout: string      // preset id ('full', 'compact', 'wide', 'minimal', plus new presets you add) or 'custom'
+sky.setSettings({ widget: Partial<WidgetConfig>, layout?: string })   // main merges `widget` (and `show`) over the stored config and validates it
+```
+
+Rules:
+- The widget must render sensibly for ANY combination, including everything off except one
+  element, horizontal with many sections, and nothing at all (show a tiny placeholder that still
+  opens the app). The window size follows the content (`setContentSize`), width 140..900, height 60..900;
+  horizontal layouts must wrap or trim rather than exceed 900.
+- Presets: keep the four from v1 and add more distinct ready-made styles (for example a slim
+  one-line "ticker", a "forecast" style with days only, a centered "hero" temperature). A preset
+  is just a `WidgetConfig`; define them in one shared file used by both the widget and Settings.
+- Settings (solid detail window) gets a "Customize widget" area: preset gallery, orientation,
+  size, alignment, text colour, hour/day counts, and a grouped list of toggles for every element,
+  with a LIVE PREVIEW of the widget that updates instantly, shown over a selectable sample
+  backdrop (dark, bright, photo-like) so people can judge legibility. Changes apply to the real
+  widget immediately. Include "Reset to preset".
+- The taskbar pill is not affected by `widget` config.
+- Mock: add `widget` to mock settings and a `?widget=<url-encoded JSON>` design param.

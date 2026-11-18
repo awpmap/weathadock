@@ -3,7 +3,10 @@
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var root = document.getElementById('root');
-  var state = null, lastSig = '', lastTray = '', first = true;
+  var state = null, settings = null, places = { locations: [], activeZip: null };
+  var lastSig = '', lastTray = '', first = true, refreshing = false;
+  var LAYOUTS = ['full', 'compact', 'wide', 'minimal'];
+  function layout() { return settings && LAYOUTS.indexOf(settings.layout) >= 0 ? settings.layout : 'full'; }
 
   function alertBanner(s) {
     var a = s.alerts && s.alerts[0];
@@ -19,14 +22,29 @@
       more + '<span class="w-alert-chev">' + I.gl('chevron-right') + '</span></div>';
   }
 
-  function topRow(s) {
+  function refreshBtn(s) {
+    var busy = refreshing || s.status === 'loading';
+    return '<span class="w-ref' + (busy ? ' is-busy' : '') + '" data-action="refresh" role="button" aria-label="Refresh now" aria-disabled="' + busy + '" title="Refresh now">' + I.gl('refresh') + '</span>';
+  }
+
+  function placeDots() {
+    var ls = places.locations || [];
+    if (ls.length < 2) return '';
+    var idx = Math.max(0, ls.findIndex(function (p) { return p.zip === places.activeZip; }));
+    if (ls.length > 6) return '<span class="w-dots"><small>' + (idx + 1) + '/' + ls.length + '</small></span>';
+    return '<span class="w-dots">' + ls.map(function (p, i) { return '<i' + (i === idx ? ' class="on"' : '') + '></i>'; }).join('') + '</span>';
+  }
+
+  function topRow(s, short) {
     var tz = s.location && s.location.timeZone;
     var loc = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'Skylight';
+    var dots = placeDots();
     var upd;
-    if (s.stale) upd = '<span class="w-upd is-stale" title="' + esc(s.error || '') + '"><i class="w-dot"></i>Offline · as of ' + esc(U.time(s.updatedAt, tz)) + '</span>';
-    else if (s.status === 'loading') upd = '<span class="w-upd">' + I.gl('refresh', 'spin') + 'Updating</span>';
-    else upd = '<span class="w-upd">' + (s.updatedAt ? 'Updated ' + esc(U.time(s.updatedAt, tz)) : '') + '</span>';
-    return '<div class="sec w-top" data-open="overview"><div class="w-loc">' + I.gl('pin') + '<span>' + loc + '</span></div>' + upd + '</div>';
+    if (s.stale) upd = '<span class="w-upd is-stale" title="' + esc(s.error || '') + '"><i class="w-dot"></i>Offline · ' + (short ? '' : 'as of ') + esc(U.time(s.updatedAt, tz)) + '</span>';
+    else if (refreshing || s.status === 'loading') upd = '<span class="w-upd">Updating…</span>';
+    else upd = '<span class="w-upd">' + (s.updatedAt ? (short ? '' : 'Updated ') + esc(U.time(s.updatedAt, tz)) : '') + '</span>';
+    return '<div class="sec w-top" data-open="overview"><div class="w-loc"' + (dots ? ' data-action="next-place" role="button" title="Switch location" aria-label="' + loc + ', switch location"' : '') + '>' +
+      I.gl('pin') + '<span>' + loc + '</span>' + dots + '</div><div class="w-right">' + upd + refreshBtn(s) + '</div></div>';
   }
 
   var UP = '<svg class="w-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9V1.500M1.8 4.5 5 1.300l3.2 3.2"/></svg>';
@@ -45,14 +63,15 @@
       '<div class="w-meta">' + meta + '</div></div>';
   }
 
-  function incoming(s) {
+  function incoming(s, noTimeline) {
     var np = s.nextPrecip;
     if (!np || !np.headline) return '';
     var tz = s.location && s.location.timeZone;
-    var tl = np.kind ? U.precipTimeline(s.minutely, tz, { height: 30 }) : '';
+    var tl = np.kind && !noTimeline ? U.precipTimeline(s.minutely, tz, { height: 30 }) : '';
     var sub = '';
     if (np.kind && !np.isNow && np.endsAt) sub = 'until ' + U.hour(np.endsAt, tz);
     else if (np.kind && np.isNow && tl) sub = 'next 6 hours';
+    if (noTimeline) sub = '';
     return '<div class="sec w-inc ' + (np.kind ? 'k-' + np.kind : 'is-dry') + '" data-open="overview">' +
       '<div class="w-inc-row"><span class="w-inc-ic">' + I.gl(np.kind ? U.kindGlyph(np.kind) : 'umbrella') + '</span><span>' + esc(np.headline) + '</span>' +
       (sub ? '<span class="w-inc-sub">' + esc(sub) + '</span>' : '') + '</div>' + tl + '</div>';
@@ -91,7 +110,12 @@
     }).join('') + '</div>';
   }
 
-  function loadingView() {
+  function loadingView(s) {
+    var where = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'Skylight';
+    /* transparent style and small layouts: no skeleton blocks, just a quiet line */
+    if (document.documentElement.dataset.glass === 'none' || layout() !== 'full') {
+      return '<div class="w-wait" data-open="overview">' + I.wx('partly-cloudy', true) + '<div><b>' + where + '</b><span>' + I.gl('refresh', 'spin') + 'Getting the latest forecast…</span></div></div>';
+    }
     var bar = function (w, h, extra) { return '<span class="skel" style="width:' + w + 'px;height:' + h + 'px;' + (extra || '') + '"></span>'; };
     return '<div class="w-skel" data-open="overview">' +
       '<div class="w-skel-row">' + bar(120, 14) + bar(70, 11) + '</div>' +
@@ -106,20 +130,35 @@
       '<span class="w-state-ring">' + I.gl('offline') + '</span>' +
       '<h2>Weather unavailable</h2>' +
       '<p>' + esc(s.error || 'Something went wrong while getting the forecast.') + '</p>' +
-      '<div class="w-btns"><button class="w-btn is-primary" data-action="refresh">Try again</button><button class="w-btn" data-open="settings">Settings</button></div></div>';
+      '<div class="w-btns"><button class="w-btn is-primary" data-action="refresh">' + (refreshing ? 'Trying…' : 'Try again') + '</button><button class="w-btn" data-open="settings">Settings</button></div></div>';
+  }
+
+  function minimal(s) {
+    var c = s.current, t = s.today || {}, a = s.alerts && s.alerts[0];
+    return '<div class="w-min" data-open="overview">' +
+      '<div class="w-icon">' + I.wx(c.icon || 'cloudy', c.isDay !== false, { animated: true }) + '</div>' +
+      '<div class="w-temp">' + (c.temp == null ? '–' : Math.round(c.temp) + '<sup>°</sup>') + '</div>' +
+      '<div class="w-min-hl"><span class="w-hl" title="Today\u2019s high">' + UP + U.deg(t.high) + '</span><span class="w-hl" title="Today\u2019s low">' + DOWN + U.deg(t.low) + '</span></div>' +
+      '<div class="w-min-side">' + (a ? '<span class="w-min-alert sev-' + U.sev(a) + '" data-open="alerts" role="button" title="' + esc(a.event) + '" aria-label="' + esc(a.event) + '">' + I.gl('alert') + '</span>' : '') + refreshBtn(s) + '</div></div>';
   }
 
   function render() {
     var s = state;
     if (!s) return;
-    var html;
+    var lay = layout(), html;
     if (s.status === 'error' && !s.current) html = errorView(s);
-    else if (!s.current) html = loadingView();
-    else html = alertBanner(s) + topRow(s) + hero(s) + incoming(s) + hours(s) + days(s);
+    else if (!s.current) html = loadingView(s);
+    else if (lay === 'minimal') html = minimal(s);
+    else if (lay === 'compact') html = alertBanner(s) + topRow(s, true) + hero(s) + incoming(s, true);
+    else if (lay === 'wide') {
+      html = alertBanner(s) + '<div class="w-wide"><div class="w-col">' + topRow(s, true) + hero(s) + '</div>' +
+        '<div class="w-col w-col-mid">' + incoming(s) + hours(s) + '</div><div class="w-col w-col-days">' + days(s) + '</div></div>';
+    } else html = alertBanner(s) + topRow(s) + hero(s) + incoming(s) + hours(s) + days(s);
+    var sig = lay + '|' + html;
     /* skip DOM churn when nothing visible changed (keeps icon animation phase too) */
-    if (html !== lastSig) {
-      lastSig = html;
-      root.classList.toggle('no-anim', !first);
+    if (sig !== lastSig) {
+      lastSig = sig;
+      root.className = 'w lay-' + lay + (first ? '' : ' no-anim');
       root.innerHTML = '<div class="w-panel">' + html + '</div>';
       first = !s.current;
     }
@@ -128,8 +167,8 @@
   }
 
   function reportSize() {
-    var h = Math.ceil(root.getBoundingClientRect().height);
-    if (h > 0) window.sky.setContentSize(380, h);
+    var r = root.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) window.sky.setContentSize(Math.ceil(r.width), Math.ceil(r.height));
   }
 
   /* 64x64 tray icon: temperature digits, soft dark outline, alert dot */
@@ -178,9 +217,25 @@
     try { window.sky.setTrayIcon(c.toDataURL('image/png')); } catch (e) {}
   }
 
+  function doRefresh() {
+    if (refreshing) return;
+    refreshing = true; render();
+    Promise.resolve(window.sky.refresh()).catch(function () {}).then(function () { refreshing = false; render(); });
+  }
+  function nextPlace() {
+    var ls = places.locations || [];
+    if (ls.length < 2) return;
+    var idx = ls.findIndex(function (p) { return p.zip === places.activeZip; });
+    var next = ls[(idx + 1) % ls.length];
+    places = { locations: ls, activeZip: next.zip }; /* optimistic, main confirms through onLocations */
+    render();
+    window.sky.setActiveLocation(next.zip);
+  }
+
   U.dragOrClick(root, function (target) {
     var act = target.closest && target.closest('[data-action]');
-    if (act && act.dataset.action === 'refresh') { window.sky.refresh(); return; }
+    if (act && act.dataset.action === 'refresh') { doRefresh(); return; }
+    if (act && act.dataset.action === 'next-place') { nextPlace(); return; }
     var el = target.closest && target.closest('[data-open]');
     window.sky.openDetail(el ? el.dataset.open : 'overview');
   });
@@ -189,7 +244,12 @@
 
   U.ready().then(function (sky) {
     sky.onState(function (s) { state = s; render(); });
-    sky.getState().then(function (s) { state = s; render(); });
+    sky.onSettings(function (s) { settings = s; render(); });
+    if (sky.onLocations) sky.onLocations(function (v) { places = v || places; render(); });
+    Promise.all([sky.getSettings().catch(function () { return null; }), sky.getLocations ? sky.getLocations().catch(function () { return null; }) : null]).then(function (r) {
+      settings = r[0]; if (r[1]) places = r[1];
+      return sky.getState();
+    }).then(function (s) { state = s; render(); });
     new ResizeObserver(reportSize).observe(root);
   });
 })();

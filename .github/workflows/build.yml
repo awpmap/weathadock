@@ -65,6 +65,12 @@ jobs:
           $procs = Get-Process | Where-Object { $_.ProcessName -match 'weathadock|msedgewebview2' }
           foreach ($p in $procs) { $report += "{0,-22} private={1,6:N0} MB  working={2,6:N0} MB" -f $p.ProcessName, ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB) }
           $report += "TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
+          try {
+            $om = Invoke-WebRequest -UseBasicParsing 'https://api.open-meteo.com/v1/forecast?latitude=41.8858&longitude=-87.6181&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m&minutely_15=precipitation,snowfall,weather_code&hourly=temperature_2m,apparent_temperature,relative_humidity_2m,dew_point_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,visibility,uv_index,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&timeformat=unixtime&forecast_days=8&forecast_minutely_15=52&past_minutely_15=0'
+            $report += "OPENMETEO " + $om.StatusCode + " " + $om.Content.Substring(0, [Math]::Min(700, $om.Content.Length))
+          } catch { $report += "OPENMETEO-FAIL " + $_.Exception.Message + " " + $_.ErrorDetails.Message }
+          $cacheFile = Join-Path $cfg 'forecast-cache.json'
+          if (Test-Path $cacheFile) { $c = Get-Content $cacheFile -Raw; $i = $c.IndexOf('"current"'); if ($i -ge 0) { $report += "CACHE " + $c.Substring($i, [Math]::Min(700, $c.Length - $i)) } }
           $report += "settings: " + (Get-Content (Join-Path $cfg 'settings.json') -Raw).Length + " bytes; cache exists: " + (Test-Path (Join-Path $cfg 'forecast-cache.json'))
           $report += "exe size: {0:N1} MB" -f ((Get-Item target/release/weathadock.exe).Length/1MB)
           $report | Tee-Object smoke/report.txt
@@ -104,23 +110,3 @@ jobs:
             gh release create "v$version" "${{ steps.installer.outputs.file }}" --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" --title "WeathaDock $version" --notes-file RELEASE_NOTES.md
           fi
-
-  # One-off comparison: the same measurement for the last Electron-based release.
-  measure-electron:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[measure-electron]')
-    runs-on: windows-latest
-    steps:
-      - shell: pwsh
-        run: |
-          Invoke-WebRequest https://github.com/awpmap/weathadock/releases/download/v1.0.1/WeathaDock-Setup-1.0.1.exe -OutFile setup.exe
-          Start-Process -FilePath ./setup.exe -ArgumentList '/S' -Wait
-          Get-Process WeathaDock -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 3
-          $cfg = Join-Path $env:APPDATA 'WeathaDock'
-          New-Item -ItemType Directory -Force -Path $cfg | Out-Null
-          '{"version":2,"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
-          Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'Programs\WeathaDock\WeathaDock.exe')
-          Start-Sleep -Seconds 30
-          $procs = Get-Process | Where-Object { $_.ProcessName -match '^WeathaDock$' }
-          foreach ($p in $procs) { "ELECTRON {0,-22} private={1,6:N0} MB  working={2,6:N0} MB" -f $p.ProcessName, ($p.PrivateMemorySize64/1MB), ($p.WorkingSet64/1MB) }
-          "ELECTRON TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count

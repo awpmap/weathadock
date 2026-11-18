@@ -1,77 +1,16 @@
 {
   "name": "weathadock",
-  "productName": "WeathaDock",
-  "version": "1.0.1",
+  "private": true,
+  "version": "1.1.0",
   "description": "WeathaDock",
-  "main": "src/main/main.js",
-  "author": "WeathaDock",
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/awpmap/weathadock.git" },
   "scripts": {
-    "start": "electron .",
-    "test": "node --test",
-    "dist": "electron-builder --win --x64",
-    "dist:zip": "electron-builder --win zip --x64 -c.win.signAndEditExecutable=false"
-  },
-  "dependencies": {
-    "electron-updater": "^6.8.11",
-    "koffi": "^2.9.0"
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "test": "cargo test -p weathadock-core"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
-  },
-  "build": {
-    "appId": "app.weathadock.desktop",
-    "productName": "WeathaDock",
-    "files": [
-      "src/**/*",
-      "package.json",
-      "!node_modules/koffi/{src,vendor,doc}/**",
-      "!node_modules/koffi/build/koffi/{darwin,linux,freebsd,openbsd,musl}*/**",
-      "!node_modules/koffi/build/koffi/win32_ia32/**",
-      "build/icon.png",
-      "build/tray.png"
-    ],
-    "asarUnpack": [
-      "node_modules/koffi/**/*"
-    ],
-    "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "artifactName": "WeathaDock-Setup-${version}.${ext}",
-      "shortcutName": "WeathaDock",
-      "createDesktopShortcut": false,
-      "createStartMenuShortcut": true,
-      "runAfterFinish": true,
-      "deleteAppDataOnUninstall": false,
-      "uninstallDisplayName": "WeathaDock"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "awpmap",
-        "repo": "weathadock",
-        "releaseType": "release"
-      }
-    ],
-    "copyright": "Copyright © 2026 WeathaDock"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/awpmap/weathadock.git"
+    "@tauri-apps/cli": "^2"
   }
 }

@@ -157,3 +157,82 @@ type WeatherState = {
 ```
 
 All times are ISO strings with offset; format them in `location.timeZone` with `Intl.DateTimeFormat`.
+
+---
+
+# Revision 2 (supersedes anything above that conflicts)
+
+## Transparency rules
+- **App windows are solid.** `detail.html` and `setup.html` are opaque windows (background
+  `#121722`); they never show the desktop. No acrylic, no translucency there.
+- **New default widget style `glass=none`:** "fully transparent, like TranslucentTB". The widget
+  paints NO panel, NO tint, NO border, NO card backgrounds: only text, icons, bars and hairlines
+  floating directly on the wallpaper. Legibility over any wallpaper (white, black, busy photo)
+  must come from text shadows / soft dark halos on glyphs and icons only. Small functional chips
+  may keep their own fill where colour carries meaning (alert banner, precipitation bars, range bars).
+  The taskbar pill in `none` mode likewise has no capsule background (alert badge keeps its fill).
+- `Settings.glass` is now `'none' | 'clear' | 'frosted'`; the query param is `glass=none|clear|frosted`
+  (`boot.js` must accept `none` and treat unknown values as `none`). `clear` and `frosted` remain
+  as optional widget styles, labelled e.g. "Transparent" (none, default), "Tinted glass" (clear),
+  "Frosted" (frosted). The style applies to the desktop widget and pill only.
+
+## Multiple locations
+```ts
+type Place = { zip: string, city: string, state: string }
+sky.getLocations(): Promise<{ locations: Place[], activeZip: string | null }>
+sky.onLocations(cb: (v: { locations: Place[], activeZip: string | null }) => void): void
+sky.addLocation(zip: string): Promise<{ ok: true, place: Place } | { ok: false, error: string }>   // validates the zip, adds it and makes it active
+sky.removeLocation(zip: string): Promise<void>     // the last remaining location cannot be removed (main ignores it)
+sky.setActiveLocation(zip: string): Promise<void>  // main pushes a new state (cached or 'loading') then refreshes
+```
+- `WeatherState.location` is always the active place. All surfaces show the active place.
+- `Settings.zip` is read-only now (mirrors `activeZip`); do not send `zip` in `setSettings`.
+- Detail window: a locations manager (list with select / remove, add by zip with inline
+  validation) and a quick switcher that is always reachable (e.g. the location name in the
+  header opens a menu). Widget: when there is more than one location, an unobtrusive way to
+  switch (e.g. click the city name to cycle, or small prev/next chevrons); never shown with one.
+- `completeSetup({ zip, glass })` is unchanged; setup offers the three widget styles with
+  Transparent preselected.
+
+## Fetch button
+- `sky.refresh()` resolves when the fetch has finished (state is pushed through `onState`).
+- Widget: a small refresh button beside the "Updated …" time; detail: a clearly labelled
+  "Refresh" button in the header. Both spin while the promise is pending and are disabled meanwhile.
+- Clicking the big temperature on the widget opens the detail window (`overview`), as before.
+
+## Widget layouts (Revision 2 addition)
+- `Settings.layout: 'full' | 'compact' | 'wide' | 'minimal'` (default `'full'`), changed through
+  `setSettings({ layout })` and pushed through `onSettings`; the widget re-renders live.
+  - `full`: everything (current temp, high/low, incoming weather + timeline, hours, days, alerts). Vertical.
+  - `compact`: current temp, condition, high/low, incoming-weather line, alert chip. Small vertical block.
+  - `wide`: horizontal strip: current block on the left, next hours and/or days to the right.
+  - `minimal`: just icon + big temperature + high/low (alert shown as a small badge).
+- Layouts are chosen in the Settings section of the detail window with small visual previews.
+  They apply to every glass style, but design them first for `glass=none`.
+- The widget is no longer fixed at 380 wide: `sky.setContentSize(w, h)` now sets both
+  (main clamps width to 140..900 and height to 60..900).
+
+## Covered mode is either/or (Revision 2 addition)
+`Settings.coveredMode` is now strictly one or the other, default `'tray'`:
+- `'tray'`: the tray icon shows the temperature number; no taskbar pill.
+- `'taskbar'`: the taskbar pill shows the weather; the tray icon is the plain app icon (main
+  handles that; the widget keeps calling `setTrayIcon` as before).
+Settings copy must present it as a choice between "Tray temperature" and "Taskbar pill", never "both".
+
+## In-app updates (Revision 2 addition)
+```ts
+type UpdateState = {
+  version: string                       // running version, e.g. "1.0.0"
+  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'ready' | 'up-to-date' | 'error'
+  newVersion: string | null, percent: number | null, error: string | null, checkedAt: string | null
+}
+sky.getUpdateState(): Promise<UpdateState>
+sky.onUpdateState(cb: (u: UpdateState) => void): void
+sky.checkForUpdates(): Promise<UpdateState>   // downloads automatically when one is found
+sky.installUpdate(): void                     // only when status is 'ready': restarts into the new version
+```
+Settings gets an "Updates" group: current version, a "Check for updates" button, live status
+(checking, downloading NN%, up to date as of time, error text), and a prominent "Restart to update"
+button when `ready`. `unsupported` means this copy cannot update itself (development run or the
+plain zip): say "Updates are available in the installed version" and hide the buttons. When
+`ready`, also show a small unobtrusive "Update ready" affordance in the detail window chrome.

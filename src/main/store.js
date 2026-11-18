@@ -4,10 +4,12 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULTS = {
-  zip: null,
-  location: null,            // { zip, city, state, lat, lon }
-  glass: 'clear',            // 'clear' | 'frosted'
-  coveredMode: 'taskbar',    // 'taskbar' | 'tray'
+  version: 2,
+  locations: [],             // [{ zip, city, state, lat, lon }]
+  activeZip: null,
+  glass: 'none',             // widget style: 'none' (fully transparent) | 'clear' (tinted) | 'frosted'
+  layout: 'full',            // widget layout: 'full' | 'compact' | 'wide' | 'minimal'
+  coveredMode: 'tray',       // while apps cover the widget: 'tray' (temperature in the tray icon) or 'taskbar' (pill)
   showWidget: true,
   launchAtLogin: true,
   alertNotifications: true,
@@ -16,7 +18,7 @@ const DEFAULTS = {
   pillPos: null,             // { x, y } once the user drags the taskbar pill
   notifiedAlerts: [],
 };
-const PUBLIC_KEYS = ['zip', 'glass', 'coveredMode', 'showWidget', 'launchAtLogin', 'alertNotifications', 'refreshMinutes'];
+const PUBLIC_KEYS = ['zip', 'glass', 'layout', 'coveredMode', 'showWidget', 'launchAtLogin', 'alertNotifications', 'refreshMinutes'];
 
 class Store {
   constructor(dir) {
@@ -24,9 +26,30 @@ class Store {
     this.data = { ...DEFAULTS };
     try {
       Object.assign(this.data, JSON.parse(fs.readFileSync(this.file, 'utf8')));
-    } catch { /* first run or unreadable file: start from defaults */ }
+    } catch { /* first run or unreadable file: start from defaults */ return; }
+    this.migrate();
   }
-  get(key) { return this.data[key]; }
+  migrate() {
+    const d = this.data;
+    if (!Array.isArray(d.locations)) d.locations = [];
+    // Version 1 stored a single `location` and defaulted to tinted glass.
+    if (d.location && !d.locations.length) {
+      d.locations = [d.location];
+      d.activeZip = d.location.zip;
+    }
+    if ('location' in d) { d.glass = 'none'; d.coveredMode = 'tray'; }
+    delete d.location;
+    delete d.zip;
+    d.version = 2;
+  }
+  get(key) {
+    if (key === 'location') {
+      const list = this.data.locations;
+      return list.find((l) => l.zip === this.data.activeZip) || list[0] || null;
+    }
+    if (key === 'zip') { const l = this.get('location'); return l ? l.zip : null; }
+    return this.data[key];
+  }
   set(patch) {
     Object.assign(this.data, patch);
     try {
@@ -38,21 +61,27 @@ class Store {
       console.error('Could not save settings:', e.message);
     }
   }
+  publicLocations() {
+    return {
+      locations: this.data.locations.map(({ zip, city, state }) => ({ zip, city, state })),
+      activeZip: this.get('zip'),
+    };
+  }
   publicSettings() {
-    return Object.fromEntries(PUBLIC_KEYS.map((k) => [k, this.data[k]]));
+    return Object.fromEntries(PUBLIC_KEYS.map((k) => [k, this.get(k)]));
   }
 }
 
 function sanitizePatch(patch) {
   const out = {};
   if (!patch || typeof patch !== 'object') return out;
-  if (['clear', 'frosted'].includes(patch.glass)) out.glass = patch.glass;
+  if (['none', 'clear', 'frosted'].includes(patch.glass)) out.glass = patch.glass;
   if (['taskbar', 'tray'].includes(patch.coveredMode)) out.coveredMode = patch.coveredMode;
   for (const k of ['showWidget', 'launchAtLogin', 'alertNotifications']) {
     if (typeof patch[k] === 'boolean') out[k] = patch[k];
   }
   if ([5, 10, 15, 30].includes(patch.refreshMinutes)) out.refreshMinutes = patch.refreshMinutes;
-  if (typeof patch.zip === 'string' && /^\d{5}$/.test(patch.zip)) out.zip = patch.zip;
+  if (['full', 'compact', 'wide', 'minimal'].includes(patch.layout)) out.layout = patch.layout;
   return out;
 }
 

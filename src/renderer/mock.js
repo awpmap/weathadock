@@ -1,7 +1,7 @@
 /* Design-time stand-in for the preload API. Loaded only when window.sky is undefined.
    ?scenario=clear-day|rain-soon|snow-night|severe-alert|loading|error
    Extras for design work: &stale=1 (mark data stale), &section=hourly (detail.html start section),
-   &setup=1 (settings.zip = null). */
+   &setup=1 (no locations yet), &places=1 (single location; default is two), &layout=full|compact|wide|minimal. */
 (function () {
   'use strict';
   if (window.sky) return;
@@ -10,6 +10,17 @@
   var scenario = params.get('scenario') || 'clear-day';
   var TZ = 'America/Chicago';
   var LOC = { zip: '62701', city: 'Springfield', state: 'IL', lat: 39.8, lon: -89.65, timeZone: TZ };
+  var ZIPS = {
+    '62701': ['Springfield', 'IL', 39.8, -89.65, 'America/Chicago'], '10001': ['New York', 'NY', 40.75, -73.99, 'America/New_York'], '60601': ['Chicago', 'IL', 41.89, -87.62, 'America/Chicago'],
+    '98101': ['Seattle', 'WA', 47.61, -122.33, 'America/Los_Angeles'], '80202': ['Denver', 'CO', 39.75, -104.99, 'America/Denver'], '33101': ['Miami', 'FL', 25.77, -80.19, 'America/New_York'],
+    '78701': ['Austin', 'TX', 30.27, -97.74, 'America/Chicago'], '94103': ['San Francisco', 'CA', 37.77, -122.41, 'America/Los_Angeles'], '02108': ['Boston', 'MA', 42.36, -71.06, 'America/New_York'],
+    '55401': ['Minneapolis', 'MN', 44.98, -93.27, 'America/Chicago'], '97201': ['Portland', 'OR', 45.5, -122.69, 'America/Los_Angeles'], '30303': ['Atlanta', 'GA', 33.75, -84.39, 'America/New_York']
+  };
+  function useZip(zip) {
+    var z = ZIPS[zip] || ZIPS['62701'];
+    TZ = z[4];
+    LOC = { zip: ZIPS[zip] ? zip : '62701', city: z[0], state: z[1], lat: z[2], lon: z[3], timeZone: TZ };
+  }
 
   /* ---------- time helpers (ISO strings with the real Chicago offset) ---------- */
   function tzParts(ms) {
@@ -278,31 +289,47 @@
     };
   }
 
-  var state = build(scenario);
-  if (params.get('stale') === '1' && state.status === 'ok') {
-    state.stale = true;
-    state.error = 'Couldn’t reach the weather service. Showing the last forecast.';
-    state.updatedAt = iso(new Date(state.updatedAt).getTime() - 47 * MIN);
-    state.sources = { nws: false, openMeteo: false };
+  var places = params.get('setup') === '1' ? [] : [{ zip: '62701', city: 'Springfield', state: 'IL' }];
+  if (places.length && params.get('places') !== '1') places.push({ zip: '80202', city: 'Denver', state: 'CO' });
+  var activeZip = places.length ? places[0].zip : null;
+  /* the second, third... place shows a different scenario so switching is visible */
+  var ALT = { 'clear-day': 'rain-soon', 'rain-soon': 'clear-day', 'snow-night': 'clear-day', 'severe-alert': 'rain-soon' };
+  function scenarioFor(zip) { return places.length && zip !== places[0].zip && ALT[scenario] ? ALT[scenario] : scenario; }
+  function withStale(st) {
+    if (params.get('stale') === '1' && st.status === 'ok') {
+      st.stale = true;
+      st.error = 'Couldn\u2019t reach the weather service. Showing the last forecast we have.';
+      st.updatedAt = iso(new Date(st.updatedAt).getTime() - 47 * MIN);
+      st.sources = { nws: false, openMeteo: false };
+    }
+    return st;
   }
+  function buildFor(zip) { useZip(zip || '62701'); return withStale(build(scenarioFor(zip))); }
 
+  var LAYOUTS = ['full', 'compact', 'wide', 'minimal'];
+  var gp = params.get('glass');
   var settings = {
-    zip: params.get('setup') === '1' ? null : LOC.zip,
-    glass: params.get('glass') === 'frosted' ? 'frosted' : 'clear',
+    zip: activeZip,
+    glass: gp === 'clear' || gp === 'frosted' ? gp : 'none',
+    layout: LAYOUTS.indexOf(params.get('layout')) >= 0 ? params.get('layout') : 'full',
     coveredMode: 'taskbar', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10
   };
 
-  var ZIPS = {
-    '62701': ['Springfield', 'IL', 39.8, -89.65], '10001': ['New York', 'NY', 40.75, -73.99], '60601': ['Chicago', 'IL', 41.89, -87.62],
-    '98101': ['Seattle', 'WA', 47.61, -122.33], '80202': ['Denver', 'CO', 39.75, -104.99], '33101': ['Miami', 'FL', 25.77, -80.19],
-    '78701': ['Austin', 'TX', 30.27, -97.74], '94103': ['San Francisco', 'CA', 37.77, -122.41], '02108': ['Boston', 'MA', 42.36, -71.06],
-    '55401': ['Minneapolis', 'MN', 44.98, -93.27], '97201': ['Portland', 'OR', 45.5, -122.69], '30303': ['Atlanta', 'GA', 33.75, -84.39]
-  };
-
-  var stateCbs = [], settingsCbs = [], navCbs = [];
+  var state = buildFor(activeZip);
+  var stateCbs = [], settingsCbs = [], navCbs = [], locCbs = [];
   function later(v, ms) { return new Promise(function (r) { setTimeout(function () { r(v); }, ms == null ? 60 : ms); }); }
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function pushState() { var s = clone(state); stateCbs.forEach(function (cb) { cb(s); }); }
+  function locs() { return { locations: clone(places), activeZip: activeZip }; }
+  function pushLocs() { settings.zip = activeZip; var v = locs(); locCbs.forEach(function (cb) { cb(v); }); var st = clone(settings); settingsCbs.forEach(function (cb) { cb(st); }); }
+  var switchSeq = 0;
+  function activate(zip) {
+    activeZip = zip; pushLocs();
+    var target = buildFor(zip), seq = ++switchSeq;
+    if (target.status !== 'ok') { state = target; pushState(); return; }
+    state = Object.assign(emptyState('loading'), { location: target.location }); pushState();
+    setTimeout(function () { if (seq === switchSeq) { state = target; pushState(); } }, 650);
+  }
   function log() { if (params.get('log') === '1') console.log.apply(console, ['[mock sky]'].concat([].slice.call(arguments))); }
 
   window.sky = {
@@ -312,15 +339,38 @@
     getSettings: function () { return later(clone(settings), 20); },
     onSettings: function (cb) { settingsCbs.push(cb); },
     setSettings: function (patch) {
-      Object.assign(settings, patch || {});
-      if (patch && patch.zip && ZIPS[patch.zip] && state.location) {
-        var z = ZIPS[patch.zip];
-        state.location = Object.assign({}, state.location, { zip: patch.zip, city: z[0], state: z[1], lat: z[2], lon: z[3] });
-        pushState();
-      }
+      var p = Object.assign({}, patch || {});
+      delete p.zip; /* read-only: mirrors activeZip */
+      Object.assign(settings, p);
       var s = clone(settings);
       settingsCbs.forEach(function (cb) { cb(s); });
       return later(s, 40);
+    },
+    getLocations: function () { return later(locs(), 20); },
+    onLocations: function (cb) { locCbs.push(cb); },
+    addLocation: function (zip) {
+      log('addLocation', zip);
+      if (!/^\d{5}$/.test(zip || '')) return later({ ok: false, error: 'Enter a 5-digit ZIP code.' }, 150);
+      var z = ZIPS[zip];
+      if (!z) return later({ ok: false, error: 'We couldn\u2019t find that ZIP code.' }, 450);
+      var place = { zip: zip, city: z[0], state: z[1] };
+      return later(null, 450).then(function () {
+        if (!places.some(function (p) { return p.zip === zip; })) places.push(place);
+        activate(zip);
+        return { ok: true, place: place };
+      });
+    },
+    removeLocation: function (zip) {
+      log('removeLocation', zip);
+      if (places.length <= 1) return later(undefined, 30);
+      places = places.filter(function (p) { return p.zip !== zip; });
+      if (activeZip === zip) activate(places[0].zip); else pushLocs();
+      return later(undefined, 30);
+    },
+    setActiveLocation: function (zip) {
+      log('setActiveLocation', zip);
+      if (places.some(function (p) { return p.zip === zip; }) && zip !== activeZip) activate(zip);
+      return later(undefined, 30);
     },
     lookupZip: function (zip) {
       var z = ZIPS[zip];
@@ -338,7 +388,7 @@
       if (prev.status === 'ok') { state = Object.assign({}, prev, { status: 'loading' }); pushState(); }
       else { state = emptyState('loading'); pushState(); }
       return later(null, 1100).then(function () {
-        state = prev.status === 'ok' ? Object.assign({}, prev, { status: 'ok' }) : build(scenario);
+        state = prev.status === 'ok' ? Object.assign({}, prev, { status: 'ok' }) : buildFor(activeZip);
         pushState();
       });
     },

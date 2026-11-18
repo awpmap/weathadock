@@ -7,6 +7,7 @@ const os = require('os');
 const { Store, sanitizePatch } = require('./store');
 const weather = require('./weather');
 const native = require('./native');
+const { createUpdater } = require('./updater');
 
 const APP_NAME = 'Skylight';
 const RENDERER = path.join(__dirname, '..', 'renderer');
@@ -14,7 +15,6 @@ const ICON = path.join(__dirname, '..', '..', 'build', 'icon.png');
 const IS_WIN = process.platform === 'win32';
 // Acrylic backdrops need Windows 11 22H2 (build 22621) or newer.
 const HAS_ACRYLIC = IS_WIN && Number(os.release().split('.')[2] || 0) >= 22621;
-const WIDGET_WIDTH = 380;
 const COVERED_AT = 0.35;      // widget counts as covered when this share of it is hidden
 const TICK_MS = 500;
 
@@ -32,11 +32,13 @@ let pill = null;
 let detail = null;
 let setup = null;
 let quitting = false;
+let updater = null;
 let refreshTimer = null;
 let retryTimer = null;
 let tickTimer = null;
 let refreshing = null;
 const pointCache = {};
+const stateCache = new Map();  // zip -> last good WeatherState, for instant location switching
 const sizes = new WeakMap();   // window -> intended { width, height } in DIP
 const drags = new WeakMap();   // window -> { x, y } accumulated drag position
 
@@ -56,7 +58,12 @@ const fetchFn = (url, init) => net.fetch(url, init);
 const alive = (w) => w && !w.isDestroyed();
 const allWindows = () => [widget, pill, detail, setup].filter(alive);
 const broadcast = (channel, value) => allWindows().forEach((w) => w.webContents.send(channel, value));
-const glass = () => (store.get('glass') === 'frosted' && HAS_ACRYLIC ? 'frosted' : 'clear');
+// Widget style: 'none' (fully transparent), 'clear' (tinted) or 'frosted' (Windows 11 acrylic).
+function glass() {
+  const g = store.get('glass');
+  if (g === 'frosted') return HAS_ACRYLIC ? 'frosted' : 'clear';
+  return g === 'clear' ? 'clear' : 'none';
+}
 
 function load(win, page, extra = {}) {
   win.loadFile(path.join(RENDERER, page), { query: { glass: glass(), platform: process.platform, ...extra } });
@@ -107,17 +114,24 @@ async function refresh() {
     clearTimeout(retryTimer);
     try {
       const next = await weather.fetchWeather(fetchFn, loc, { pointCache, previousAlerts: state.alerts });
+      stateCache.set(loc.zip, next);
+      if (store.get('zip') !== loc.zip) return; // the user switched places while this was loading
       state = next;
       notifyAlerts(next.alerts);
     } catch (e) {
       console.error('Refresh failed:', e.message);
+      if (store.get('zip') !== loc.zip) return;
       state = state.current
         ? { ...state, stale: true, error: e.message }
         : { ...emptyState('error', e.message), location: { ...loc, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } };
       retryTimer = setTimeout(refresh, 60 * 1000);
     }
     publish();
-  })().finally(() => { refreshing = null; });
+  })().finally(() => {
+    refreshing = null;
+    // A switch during the fetch means the active place still needs its own refresh.
+    if (store.get('zip') !== loc.zip) refresh();
+  });
   return refreshing;
 }
 
@@ -158,6 +172,13 @@ function updateTray() {
   const loc = state.location || store.get('location');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: loc ? `${loc.city}, ${loc.state}` : APP_NAME, enabled: false },
+    ...(store.get('locations').length > 1 ? [{
+      label: 'Switch location',
+      submenu: store.get('locations').map((l) => ({
+        label: `${l.city}, ${l.state}  ${l.zip}`, type: 'radio', checked: l.zip === store.get('zip'),
+        click: () => setActiveLocation(l.zip),
+      })),
+    }] : []),
     { type: 'separator' },
     { label: 'Open Skylight', click: () => openDetail('overview') },
     ...(state.alerts.length ? [{ label: `Alerts (${state.alerts.length})`, click: () => openDetail('alerts') }] : []),
@@ -171,6 +192,8 @@ function updateTray() {
       click: () => { store.set({ widgetPos: null, pillPos: null }); rebuildGlassWindows(); placePill(); },
     },
     { label: 'Settings', click: () => openDetail('settings') },
+    ...(updater && updater.getState().status === 'ready'
+      ? [{ label: `Restart to update to ${updater.getState().newVersion}`, click: () => { quitting = true; updater.install(); } }] : []),
     { type: 'separator' },
     { label: 'Quit', click: () => quit() },
   ]));
@@ -178,27 +201,44 @@ function updateTray() {
 
 function createTray() {
   const base = nativeImage.createFromPath(ICON);
-  tray = new Tray(base.isEmpty() ? nativeImage.createEmpty() : base.resize({ width: 16, height: 16 }));
+  trayPlainImage = base.isEmpty() ? nativeImage.createEmpty() : multiRes(base);
+  tray = new Tray(trayPlainImage);
   tray.on('click', () => openDetail('overview'));
   updateTray();
+}
+
+let trayNumberImage = null;
+let trayPlainImage = null;
+
+// Either/or: in 'tray' mode the tray icon is the temperature; in 'taskbar' mode the pill
+// carries the weather and the tray icon is just the plain app icon (menu and quit live there).
+function applyTrayImage() {
+  if (!tray) return;
+  const img = store.get('coveredMode') === 'tray' && trayNumberImage ? trayNumberImage : trayPlainImage;
+  if (img) tray.setImage(img);
+}
+
+function multiRes(src) {
+  const img = nativeImage.createEmpty();
+  for (const scaleFactor of [1, 1.25, 1.5, 2]) {
+    const px = Math.round(16 * scaleFactor);
+    img.addRepresentation({ scaleFactor, width: px, height: px, buffer: src.resize({ width: px, height: px, quality: 'best' }).toPNG() });
+  }
+  return img;
 }
 
 function setTrayIcon(dataUrl) {
   if (!tray || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) return;
   const src = nativeImage.createFromDataURL(dataUrl);
   if (src.isEmpty()) return;
-  const img = nativeImage.createEmpty();
-  for (const scaleFactor of [1, 1.25, 1.5, 2]) {
-    const px = Math.round(16 * scaleFactor);
-    img.addRepresentation({ scaleFactor, width: px, height: px, buffer: src.resize({ width: px, height: px, quality: 'best' }).toPNG() });
-  }
-  tray.setImage(img);
+  trayNumberImage = multiRes(src);
+  applyTrayImage();
 }
 
 // ---------------------------------------------------------------- windows
 
 function createWidget() {
-  const size = { width: WIDGET_WIDTH, height: 420 };
+  const size = { width: 380, height: 420 };
   const area = screen.getPrimaryDisplay().workArea;
   const pos = onScreen(store.get('widgetPos'), size)
     || { x: area.x + area.width - size.width - 28, y: area.y + 28 };
@@ -292,6 +332,7 @@ function setPillVisible(visible) {
 
 function openDetail(section = 'overview') {
   if (!store.get('location')) return openSetup();
+  if (!state.updatedAt || Date.now() - Date.parse(state.updatedAt) > 60 * 1000) refresh();
   if (alive(detail)) {
     if (detail.isMinimized()) detail.restore();
     detail.show();
@@ -397,32 +438,59 @@ function startTicking() {
 async function applySettings(patch) {
   const clean = sanitizePatch(patch);
   const before = { ...store.publicSettings() };
-  if (clean.zip && clean.zip !== before.zip) {
-    const found = await weather.lookupZip(fetchFn, clean.zip);
-    if (found.ok) {
-      const { ok, ...location } = found;
-      clean.location = location;
-    } else {
-      delete clean.zip;
-    }
-  }
   store.set(clean);
   const after = store.publicSettings();
   if (after.launchAtLogin !== before.launchAtLogin) applyLoginItem();
   if (after.refreshMinutes !== before.refreshMinutes) scheduleRefresh();
-  if (after.glass !== before.glass) rebuildGlassWindows();
+  if (after.glass !== before.glass) {
+    rebuildGlassWindows();
+    if (alive(pill)) load(pill, 'pill.html');
+  }
   if (after.showWidget !== before.showWidget && alive(widget)) {
     if (after.showWidget) showWidget(); else widget.hide();
   }
-  if (after.coveredMode !== before.coveredMode && !native.available) setPillVisible(false);
-  if (clean.location) {
-    state = { ...emptyState('loading'), location: { ...clean.location, timeZone: state.location ? state.location.timeZone : 'UTC' } };
-    publish();
-    refresh();
-  }
+  if (after.coveredMode !== before.coveredMode) { applyTrayImage(); if (after.coveredMode === 'tray') setPillVisible(false); }
   broadcast('sky:settings', after);
   updateTray();
   return after;
+}
+
+function publishLocations() {
+  broadcast('sky:locations', store.publicLocations());
+  broadcast('sky:settings', store.publicSettings());
+  updateTray();
+}
+
+function setActiveLocation(zip) {
+  const loc = store.get('locations').find((l) => l.zip === zip);
+  if (!loc) return;
+  store.set({ activeZip: zip });
+  // Show what we already know for this place straight away, then fetch fresh data.
+  state = stateCache.get(zip) || { ...emptyState('loading'), location: { ...loc, timeZone: 'UTC' } };
+  publish();
+  publishLocations();
+  refresh();
+}
+
+async function addLocation(zipInput) {
+  const found = await weather.lookupZip(fetchFn, zipInput);
+  if (!found.ok) return found;
+  const { ok, ...location } = found;
+  const rest = store.get('locations').filter((l) => l.zip !== location.zip);
+  if (rest.length >= 12) return { ok: false, error: 'You can keep up to 12 locations. Remove one first.' };
+  store.set({ locations: [...rest, location] });
+  setActiveLocation(location.zip);
+  return { ok: true, place: { zip: location.zip, city: location.city, state: location.state } };
+}
+
+function removeLocation(zip) {
+  const list = store.get('locations');
+  if (list.length <= 1 || !list.some((l) => l.zip === zip)) return;
+  const wasActive = store.get('zip') === zip;
+  const rest = list.filter((l) => l.zip !== zip);
+  store.set({ locations: rest });
+  stateCache.delete(zip);
+  if (wasActive) setActiveLocation(rest[0].zip); else publishLocations();
 }
 
 function applyLoginItem() {
@@ -444,13 +512,17 @@ const senderWindow = (e) => BrowserWindow.fromWebContents(e.sender);
 ipcMain.handle('sky:getState', () => state);
 ipcMain.handle('sky:getSettings', () => store.publicSettings());
 ipcMain.handle('sky:setSettings', (_e, patch) => applySettings(patch));
+ipcMain.handle('sky:getLocations', () => store.publicLocations());
+ipcMain.handle('sky:addLocation', (_e, zip) => addLocation(zip));
+ipcMain.handle('sky:removeLocation', (_e, zip) => removeLocation(zip));
+ipcMain.handle('sky:setActiveLocation', (_e, zip) => setActiveLocation(zip));
 ipcMain.handle('sky:lookupZip', (_e, zip) => weather.lookupZip(fetchFn, zip));
 ipcMain.handle('sky:refresh', () => refresh());
 ipcMain.handle('sky:completeSetup', async (_e, v) => {
   const found = await weather.lookupZip(fetchFn, v && v.zip);
   if (!found.ok) return { ok: false, error: found.error };
   const { ok, ...location } = found;
-  store.set({ zip: location.zip, location, glass: v.glass === 'frosted' ? 'frosted' : 'clear' });
+  store.set({ locations: [location], activeZip: location.zip, ...sanitizePatch({ glass: v.glass }) });
   applyLoginItem();
   state = emptyState('loading');
   startApp();
@@ -493,10 +565,17 @@ ipcMain.on('sky:setContentSize', (e, width, height) => {
   const w = senderWindow(e);
   if (!w || !Number.isFinite(width) || !Number.isFinite(height)) return;
   if (w === widget) {
-    const size = { width: WIDGET_WIDTH, height: Math.max(120, Math.min(900, Math.ceil(height))) };
+    const size = {
+      width: Math.max(140, Math.min(900, Math.ceil(width))),
+      height: Math.max(60, Math.min(900, Math.ceil(height))),
+    };
     sizes.set(w, size);
     const b = w.getBounds();
-    if (b.height !== size.height || b.width !== size.width) w.setBounds({ x: b.x, y: b.y, ...size });
+    if (b.height === size.height && b.width === size.width) return;
+    // A widget parked on the right half of the screen keeps its right edge when its width changes.
+    const area = screen.getDisplayMatching(b).workArea;
+    const rightSide = b.x + b.width / 2 > area.x + area.width / 2;
+    w.setBounds({ x: rightSide ? b.x + b.width - size.width : b.x, y: b.y, ...size });
   } else if (w === pill) {
     const prev = sizes.get(w) || { height: 48 };
     const next = { width: Math.max(80, Math.min(360, Math.ceil(width))), height: prev.height };
@@ -510,12 +589,26 @@ ipcMain.on('sky:setContentSize', (e, width, height) => {
 });
 ipcMain.on('sky:setTrayIcon', (_e, dataUrl) => setTrayIcon(dataUrl));
 ipcMain.on('sky:quit', () => quit());
+ipcMain.handle('sky:getUpdateState', () => updater.getState());
+ipcMain.handle('sky:checkForUpdates', () => updater.check());
+ipcMain.on('sky:installUpdate', () => { quitting = true; updater.install(); });
 
 // ---------------------------------------------------------------- lifecycle
 
 app.whenReady().then(() => {
   store = new Store(app.getPath('userData'));
   Menu.setApplicationMenu(null);
+  let announced = null;
+  updater = createUpdater((u) => {
+    broadcast('sky:updateState', u);
+    if (u.status === 'ready' && announced !== u.newVersion && Notification.isSupported()) {
+      announced = u.newVersion;
+      const n = new Notification({ title: `${APP_NAME} ${u.newVersion} is ready`, body: 'It installs the next time Skylight restarts. Click to restart now.', icon: ICON });
+      n.on('click', () => { quitting = true; updater.install(); });
+      n.show();
+    }
+    updateTray();
+  });
   createTray();
   if (store.get('location')) {
     state = { ...emptyState('loading'), location: { ...store.get('location'), timeZone: 'UTC' } };

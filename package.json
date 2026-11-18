@@ -13,6 +13,7 @@
     "dist:zip": "electron-builder --win zip --x64 -c.win.signAndEditExecutable=false"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "koffi": "^2.9.0"
   },
   "devDependencies": {

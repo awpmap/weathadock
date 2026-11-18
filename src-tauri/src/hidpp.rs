@@ -191,8 +191,11 @@ impl Channel {
     /// Battery of the device at `device`, and whether that device is a mouse or trackball.
     fn battery(&self, device: u8) -> Option<(Battery, bool)> {
         let battery = if let Some(index) = self.feature(device, FEATURE_UNIFIED_BATTERY) {
-            let r = self.request(device, index, 1, &[])?; // [state of charge %, level, charging status, ..]
-            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=3) }
+            // [state of charge %, level, charging status, external power]. Status 1 to 3 are
+            // charging, slow charging and full on the charger; external power 1 means a cable
+            // or charging pad is supplying power, which some mice report before the status changes.
+            let r = self.request(device, index, 1, &[])?;
+            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=3) || r[3] == 1 }
         } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS) {
             let r = self.request(device, index, 0, &[])?; // [level %, next level %, status]
             Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=4) }

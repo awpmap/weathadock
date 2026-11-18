@@ -246,7 +246,9 @@ fn start_scheduler(app: &AppHandle) {
     });
 }
 
-const BATTERY_EVERY_MS: i64 = 5 * 60_000;
+// Checked on every scheduler pass (20 s), so plugging the mouse in shows up quickly. One check is a single
+// short exchange with the receiver on a background thread.
+const BATTERY_EVERY_MS: i64 = 15_000;
 const BATTERY_LOW: u8 = 15;
 
 fn battery_info(app: &AppHandle) -> Value {

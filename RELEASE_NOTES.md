@@ -1,8 +1,6 @@
-## WeathaDock 1.1.7
+## WeathaDock 1.1.8
 
-**Out of the way in full screen.** The taskbar strip and pill now disappear while a game, a full-screen video or a presentation has the screen, and come back when you leave it. A widget set to stay above other windows steps back too.
-
-**Fixed: things that were told to hide stayed on screen.** Switching the weather to the taskbar, or turning the desktop widget off, now removes the widget right away instead of after a restart, and the small taskbar pill goes away again when the widget is back in view.
+**Mouse battery keeps up.** The mouse battery is now checked every 20 seconds instead of every five minutes, so "Charging" appears shortly after you plug the mouse in and the percentage stays current. It also recognizes a mouse that reports being on external power before it reports charging.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

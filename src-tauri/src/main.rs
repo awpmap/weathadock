@@ -1137,6 +1137,8 @@ fn dock_info(app: &AppHandle) -> Value {
 
 #[tauri::command]
 fn get_dock(app: AppHandle) -> Value {
+    // Measure now: the strip's page can ask before the window has been placed for the first time.
+    let _ = pill_geometry(&app, 0);
     trace(format!("get_dock -> {}", dock_info(&app)));
     dock_info(&app)
 }

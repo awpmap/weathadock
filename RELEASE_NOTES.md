@@ -1,6 +1,6 @@
-## WeathaDock 1.1.3
+## WeathaDock 1.1.4
 
-**A tray temperature that is clearly the weather.** The number in the tray now sits on WeathaDock's sky-blue tile with a degree mark, so it is not mistaken for the CPU or GPU temperatures that hardware monitors show there. Hovering it starts with "Weather in" and your place.
+**Weather on the taskbar.** A new placement puts WeathaDock in the empty space at the left end of the taskbar instead of on the desktop: current conditions, high and low, the next few hours, and any active alert. Turn it on in Settings, Placement, "On the taskbar". It is made for centered taskbar icons, fits itself to the space available, and follows light and dark taskbars. Click it to open the full forecast.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

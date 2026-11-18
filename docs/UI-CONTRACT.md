@@ -84,6 +84,7 @@ temperature draw a simple cloud glyph.
 type Settings = {
   zip: string | null
   glass: 'clear' | 'frosted'
+  placement: 'desktop' | 'taskbar'     // desktop widget, or a strip docked at the left end of the taskbar (pill window; see getDock)
   coveredMode: 'taskbar' | 'tray'      // where it goes when apps cover the widget: taskbar pill + tray, or tray only
   showWidget: boolean
   launchAtLogin: boolean
@@ -315,3 +316,10 @@ sky.showContextMenu(): void         // widget + pill: call on right-click (conte
 - Detail window keyboard: Ctrl+R refreshes, Ctrl+1..5 switch sections, Esc closes an open menu.
 - Main now remembers the detail window's size and position and shows the last forecast
   instantly at startup; nothing needed from the renderer.
+
+## Revision 5: taskbar dock
+
+`Settings.placement = 'taskbar'` replaces the desktop widget with the pill window docked in the free
+space left of the Start button. `sky.getDock()` / `sky.onDock(cb)` give `{ room, light }`: the logical
+pixels available (0 when the taskbar has no free stretch, in which case the pill keeps its place by
+the tray) and whether the taskbar is light. The pill drops hours, then the hint, then the words to fit.

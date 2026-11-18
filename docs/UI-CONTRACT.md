@@ -281,3 +281,37 @@ Rules:
   widget immediately. Include "Reset to preset".
 - The taskbar pill is not affected by `widget` config.
 - Mock: add `widget` to mock settings and a `?widget=<url-encoded JSON>` design param.
+
+---
+
+# Revision 4: quality-of-life pass (ships together with Revision 3)
+
+Guiding words from the person: "need a smooth clean sleek experience, lightweight as-well dont
+add a bunch of" extras. So: polish and small conveniences only. No new dependencies, no
+continuous animation loops, no decorative features.
+
+## Polish requirements
+- **Optical sizing and alignment.** Reported bug: in the minimal layout the weather icon is
+  visibly smaller than the temperature digits and the degree sign, so the pair looks offset.
+  Wherever an icon sits beside the big temperature (every preset and any custom combination,
+  every size) the icon's visual height must match the digits' cap height and share their optical
+  centre line; the degree sign must not make the number look taller than the icon. Apply the same
+  care to every icon+text pair in the widget, pill, detail window and setup (baseline or centre
+  alignment chosen deliberately, consistent gaps).
+- Smoothness: state changes (refresh, location switch, layout change) must not flash, jump or
+  reflow visibly; keep transitions short and subtle; respect reduced motion.
+
+## New settings (main already implements the behaviour)
+```ts
+Settings.lockPosition: boolean      // widget cannot be dragged
+Settings.snapToEdges: boolean       // widget snaps to screen edges while dragging (default true)
+Settings.widgetOnTop: boolean       // keep the widget above other windows instead of on the desktop
+Settings.widgetOpacity: number      // 30..100 (%), whole widget
+sky.showContextMenu(): void         // widget + pill: call on right-click (contextmenu event); main shows a native menu
+```
+- Settings UI: put opacity (slider) with the other design options in "Customize widget";
+  lock position, snap to edges and keep above other windows in a compact "Behaviour" group.
+- When `lockPosition` is on, the widget should not show a move cursor or start a drag.
+- Detail window keyboard: Ctrl+R refreshes, Ctrl+1..5 switch sections, Esc closes an open menu.
+- Main now remembers the detail window's size and position and shows the last forecast
+  instantly at startup; nothing needed from the renderer.

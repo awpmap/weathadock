@@ -46,6 +46,11 @@ const DEFAULTS = {
   widget: sanitizeWidget(null),
   coveredMode: 'tray',       // while apps cover the widget: 'tray' (temperature in the tray icon) or 'taskbar' (pill)
   showWidget: true,
+  lockPosition: false,       // ignore drags on the widget
+  snapToEdges: true,         // widget snaps to screen edges while dragging
+  widgetOnTop: false,        // keep the widget above other windows instead of on the desktop
+  widgetOpacity: 100,        // 30..100 (%)
+  detailBounds: null,
   launchAtLogin: true,
   alertNotifications: true,
   refreshMinutes: 10,
@@ -53,7 +58,7 @@ const DEFAULTS = {
   pillPos: null,             // { x, y } once the user drags the taskbar pill
   notifiedAlerts: [],
 };
-const PUBLIC_KEYS = ['zip', 'glass', 'layout', 'widget', 'coveredMode', 'showWidget', 'launchAtLogin', 'alertNotifications', 'refreshMinutes'];
+const PUBLIC_KEYS = ['zip', 'glass', 'layout', 'widget', 'lockPosition', 'snapToEdges', 'widgetOnTop', 'widgetOpacity', 'coveredMode', 'showWidget', 'launchAtLogin', 'alertNotifications', 'refreshMinutes'];
 
 class Store {
   constructor(dir) {
@@ -113,9 +118,10 @@ function sanitizePatch(patch, current) {
   if (!patch || typeof patch !== 'object') return out;
   if (['none', 'clear', 'frosted'].includes(patch.glass)) out.glass = patch.glass;
   if (['taskbar', 'tray'].includes(patch.coveredMode)) out.coveredMode = patch.coveredMode;
-  for (const k of ['showWidget', 'launchAtLogin', 'alertNotifications']) {
+  for (const k of ['showWidget', 'launchAtLogin', 'alertNotifications', 'lockPosition', 'snapToEdges', 'widgetOnTop']) {
     if (typeof patch[k] === 'boolean') out[k] = patch[k];
   }
+  if (Number.isFinite(patch.widgetOpacity)) out.widgetOpacity = Math.max(30, Math.min(100, Math.round(patch.widgetOpacity)));
   if ([5, 10, 15, 30].includes(patch.refreshMinutes)) out.refreshMinutes = patch.refreshMinutes;
   if (typeof patch.layout === 'string' && /^[a-z-]{1,24}$/.test(patch.layout)) out.layout = patch.layout;
   if (patch.widget && typeof patch.widget === 'object') out.widget = sanitizeWidget(patch.widget, current && current.widget);

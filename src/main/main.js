@@ -117,6 +117,7 @@ async function refresh() {
     try {
       const next = await weather.fetchWeather(fetchFn, loc, { pointCache, previousAlerts: state.alerts });
       stateCache.set(loc.zip, next);
+      saveCache();
       if (store.get('zip') !== loc.zip) return; // the user switched places while this was loading
       state = next;
       notifyAlerts(next.alerts);
@@ -135,6 +136,23 @@ async function refresh() {
     if (store.get('zip') !== loc.zip) refresh();
   });
   return refreshing;
+}
+
+// Last good forecasts are kept on disk so the widget has something to show the moment it starts.
+const cacheFile = () => path.join(app.getPath('userData'), 'forecast-cache.json');
+function saveCache() {
+  try {
+    fs.writeFileSync(cacheFile(), JSON.stringify(Object.fromEntries(stateCache)));
+  } catch (e) { /* the cache is a convenience only */ }
+}
+function loadCache() {
+  try {
+    const known = new Set(store.get('locations').map((l) => l.zip));
+    for (const [zip, s] of Object.entries(JSON.parse(fs.readFileSync(cacheFile(), 'utf8')))) {
+      const age = Date.now() - Date.parse(s && s.updatedAt);
+      if (known.has(zip) && s.status === 'ok' && age >= 0 && age < 6 * 3600 * 1000) stateCache.set(zip, s);
+    }
+  } catch (e) { /* no cache yet */ }
 }
 
 function scheduleRefresh() {
@@ -263,8 +281,17 @@ function createWidget() {
 
 function showWidget() {
   if (!alive(widget)) return;
+  applyWidgetLevel();
   widget.showInactive();
-  if (native.available) native.sendToBottom(native.hwndOf(widget));
+  if (native.available && !store.get('widgetOnTop')) native.sendToBottom(native.hwndOf(widget));
+}
+
+function applyWidgetLevel() {
+  if (!alive(widget)) return;
+  widget.setOpacity(store.get('widgetOpacity') / 100);
+  const onTop = !!store.get('widgetOnTop');
+  if (widget.isAlwaysOnTop() !== onTop) widget.setAlwaysOnTop(onTop, 'floating');
+  if (!onTop && native.available && widget.isVisible()) native.sendToBottom(native.hwndOf(widget));
 }
 
 function taskbarGeometry() {
@@ -344,17 +371,26 @@ function openDetail(section = 'overview') {
     return undefined;
   }
   detail = new BrowserWindow({
-    width: 1000, height: 700, minWidth: 780, minHeight: 560,
+    width: 1000, height: 700, ...savedDetailBounds(), minWidth: 780, minHeight: 560,
     backgroundColor: '#121722', // solid: app windows never show the desktop through them
     frame: false, show: false, title: APP_NAME, icon: ICON, webPreferences: webPreferences(),
   });
   load(detail, 'detail.html', { section });
+  detail.on('close', () => {
+    if (!detail.isMaximized() && !detail.isMinimized()) store.set({ detailBounds: detail.getBounds() });
+  });
   detail.once('ready-to-show', () => {
     detail.show();
     detail.webContents.send('sky:navigate', section);
   });
   detail.on('closed', () => { detail = null; });
   return undefined;
+}
+
+function savedDetailBounds() {
+  const b = store.get('detailBounds');
+  if (!b || !(b.width >= 780) || !(b.height >= 560)) return {};
+  return onScreen({ x: b.x, y: b.y }, b) ? b : { width: b.width, height: b.height };
 }
 
 function openSetup() {
@@ -410,13 +446,14 @@ function tick() {
   }
   // Keep the widget at desktop level: show it when the desktop itself is in front
   // (for example after Win+D), and tuck it under other apps as soon as one is used.
-  if (widgetOn && widget.isVisible()) {
+  const onTop = !!store.get('widgetOnTop');
+  if (widgetOn && widget.isVisible() && !onTop) {
     if (snap.desktopForeground && !desktopWasForeground) native.raise(native.hwndOf(widget));
     if (!snap.desktopForeground && desktopWasForeground && !snap.fgIsOurs) native.sendToBottom(native.hwndOf(widget));
   }
   desktopWasForeground = snap.desktopForeground;
 
-  const nowCovered = !widgetOn || !widget.isVisible() || (!snap.desktopForeground && snap.coverage >= COVERED_AT);
+  const nowCovered = !widgetOn || !widget.isVisible() || (!onTop && !snap.desktopForeground && snap.coverage >= COVERED_AT);
   // Two matching readings in a row before switching, so dragging a window past does not flicker.
   coveredVotes = nowCovered === covered ? 0 : coveredVotes + 1;
   if (coveredVotes >= 2) { covered = nowCovered; coveredVotes = 0; }
@@ -449,6 +486,7 @@ async function applySettings(patch) {
     rebuildGlassWindows();
     if (alive(pill)) load(pill, 'pill.html');
   }
+  if (after.widgetOnTop !== before.widgetOnTop || after.widgetOpacity !== before.widgetOpacity) applyWidgetLevel();
   if (after.showWidget !== before.showWidget && alive(widget)) {
     if (after.showWidget) showWidget(); else widget.hide();
   }
@@ -552,9 +590,21 @@ ipcMain.on('sky:moveBy', (e, dx, dy) => {
   const size = sizes.get(w) || w.getBounds();
   let d = drags.get(w);
   if (!d) { const b = w.getBounds(); d = { x: b.x, y: b.y }; drags.set(w, d); }
+  if (w === widget && store.get('lockPosition')) return;
   d.x += dx; d.y += dy;
+  let x = Math.round(d.x);
+  let y = Math.round(d.y);
+  if (w === widget && store.get('snapToEdges')) {
+    const a = screen.getDisplayMatching({ x, y, width: size.width, height: size.height }).workArea;
+    const SNAP = 14;
+    const MARGIN = 12;
+    if (Math.abs(x - (a.x + MARGIN)) < SNAP) x = a.x + MARGIN;
+    if (Math.abs(x + size.width - (a.x + a.width - MARGIN)) < SNAP) x = a.x + a.width - MARGIN - size.width;
+    if (Math.abs(y - (a.y + MARGIN)) < SNAP) y = a.y + MARGIN;
+    if (Math.abs(y + size.height - (a.y + a.height - MARGIN)) < SNAP) y = a.y + a.height - MARGIN - size.height;
+  }
   // Always pass the intended size: moving by position alone lets the size drift on scaled displays.
-  w.setBounds({ x: Math.round(d.x), y: Math.round(d.y), width: size.width, height: size.height });
+  w.setBounds({ x, y, width: size.width, height: size.height });
 });
 ipcMain.on('sky:dragEnd', (e) => {
   const w = senderWindow(e);
@@ -592,6 +642,28 @@ ipcMain.on('sky:setContentSize', (e, width, height) => {
 });
 ipcMain.on('sky:setTrayIcon', (_e, dataUrl) => setTrayIcon(dataUrl));
 ipcMain.on('sky:quit', () => quit());
+ipcMain.on('sky:contextMenu', (e) => {
+  const w = senderWindow(e);
+  if (!w || (w !== widget && w !== pill)) return;
+  const places = store.get('locations');
+  Menu.buildFromTemplate([
+    { label: 'Open WeathaDock', click: () => openDetail('overview') },
+    { label: 'Refresh now', click: () => refresh() },
+    ...(places.length > 1 ? [{
+      label: 'Location',
+      submenu: places.map((l) => ({
+        label: `${l.city}, ${l.state}`, type: 'radio', checked: l.zip === store.get('zip'), click: () => setActiveLocation(l.zip),
+      })),
+    }] : []),
+    { type: 'separator' },
+    { label: 'Customize widget…', click: () => openDetail('settings') },
+    { label: 'Lock position', type: 'checkbox', checked: store.get('lockPosition'), click: (i) => applySettings({ lockPosition: i.checked }) },
+    { label: 'Keep above other windows', type: 'checkbox', checked: store.get('widgetOnTop'), click: (i) => applySettings({ widgetOnTop: i.checked }) },
+    { label: 'Hide widget', click: () => applySettings({ showWidget: false }) },
+    { type: 'separator' },
+    { label: 'Quit WeathaDock', click: () => quit() },
+  ]).popup({ window: w });
+});
 ipcMain.handle('sky:getUpdateState', () => updater.getState());
 ipcMain.handle('sky:checkForUpdates', () => updater.check());
 ipcMain.on('sky:installUpdate', () => { quitting = true; updater.install(); });
@@ -623,7 +695,9 @@ app.whenReady().then(() => {
   });
   createTray();
   if (store.get('location')) {
-    state = { ...emptyState('loading'), location: { ...store.get('location'), timeZone: 'UTC' } };
+    loadCache();
+    state = stateCache.get(store.get('zip'))
+      || { ...emptyState('loading'), location: { ...store.get('location'), timeZone: 'UTC' } };
     startApp();
     if (!process.argv.includes('--hidden') && !app.getLoginItemSettings().wasOpenedAtLogin && !store.get('showWidget')) {
       openDetail('overview');

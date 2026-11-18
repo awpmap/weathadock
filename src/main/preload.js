@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld('sky', {
   onUpdateState: on('sky:updateState'),
   checkForUpdates: () => ipcRenderer.invoke('sky:checkForUpdates'),
   installUpdate: () => ipcRenderer.send('sky:installUpdate'),
+  showContextMenu: () => ipcRenderer.send('sky:contextMenu'),
   quit: () => ipcRenderer.send('sky:quit'),
 });

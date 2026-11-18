@@ -1,7 +1,7 @@
 /* Design-time stand-in for the preload API. Loaded only when window.sky is undefined.
    ?scenario=clear-day|rain-soon|snow-night|severe-alert|loading|error
    Extras for design work: &stale=1 (mark data stale), &section=hourly (detail.html start section),
-   &setup=1 (no locations yet), &places=1 (single location; default is two), &layout=full|compact|wide|minimal,
+   &setup=1 (no locations yet), &places=1 (single location; default is two), &layout=<preset id> (see presets.js), &widget=<url-encoded JSON WidgetConfig, merged over the preset; layout becomes 'custom'>,
    &update=ready|downloading|unsupported|error|available (available: "Check for updates" finds and downloads one). */
 (function () {
   'use strict';
@@ -315,14 +315,27 @@
     return st;
   }
 
-  var LAYOUTS = ['full', 'compact', 'wide', 'minimal'];
+  var PRESETS = window.WD_PRESETS || [];
+  function presetById(id) { for (var i = 0; i < PRESETS.length; i++) if (PRESETS[i].id === id) return PRESETS[i]; return null; }
+  /* same merge rule as main: shallow over the config, `show` merged key by key */
+  function mergeWidget(base, patch) {
+    var out = Object.assign({}, base, patch || {});
+    out.show = Object.assign({}, (base && base.show) || {}, (patch && patch.show) || {});
+    return out;
+  }
   var gp = params.get('glass');
+  var startPreset = presetById(params.get('layout')) || presetById('full');
   var settings = {
     zip: activeZip,
     glass: gp === 'clear' || gp === 'frosted' ? gp : 'none',
-    layout: LAYOUTS.indexOf(params.get('layout')) >= 0 ? params.get('layout') : 'full',
+    layout: startPreset ? startPreset.id : 'full',
+    widget: startPreset ? clone(startPreset.widget) : null,
     coveredMode: 'tray', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10
   };
+  if (params.get('widget')) {
+    try { settings.widget = mergeWidget(settings.widget || {}, JSON.parse(params.get('widget'))); settings.layout = 'custom'; }
+    catch (e) { console.warn('[mock sky] bad ?widget= JSON'); }
+  }
 
   var state = buildFor(activeZip);
   var stateCbs = [], settingsCbs = [], navCbs = [], locCbs = [];
@@ -361,7 +374,10 @@
     setSettings: function (patch) {
       var p = Object.assign({}, patch || {});
       delete p.zip; /* read-only: mirrors activeZip */
+      var w = p.widget; delete p.widget;
       Object.assign(settings, p);
+      if (w) settings.widget = mergeWidget(settings.widget || {}, w);
+      else if (p.layout && presetById(p.layout)) settings.widget = clone(presetById(p.layout).widget);
       var s = clone(settings);
       settingsCbs.forEach(function (cb) { cb(s); });
       return later(s, 40);

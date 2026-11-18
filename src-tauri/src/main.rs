@@ -486,6 +486,17 @@ fn window(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
     app.get_webview_window(label)
 }
 
+/// Hide a window that `show_inactive` showed. Those windows are shown with Win32 directly, so
+/// the window library still believes they are hidden and its own `hide()` would do nothing.
+fn hide_window(w: &WebviewWindow) {
+    #[cfg(windows)]
+    if let Some(h) = win32::handle_of(w) {
+        win32::hide(h);
+        return;
+    }
+    let _ = w.hide();
+}
+
 fn show_inactive(w: &WebviewWindow) {
     #[cfg(windows)]
     if let Some(h) = win32::handle_of(w) {
@@ -683,7 +694,7 @@ fn set_pill_visible(app: &AppHandle, visible: bool) {
         place_pill(app);
         show_inactive(&w);
     } else {
-        let _ = w.hide();
+        hide_window(&w);
     }
 }
 
@@ -901,7 +912,7 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
         if widget_enabled(app) {
             show_widget(app);
         } else if let Some(w) = window(app, "widget") {
-            let _ = w.hide();
+            hide_window(&w);
         }
     }
     if changed("coveredMode") || changed("glass") || changed("placement") {

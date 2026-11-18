@@ -9,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, GetClassNameW, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowLongW,
     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
     GWL_EXSTYLE, GW_HWNDNEXT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 pub type Handle = isize;
@@ -198,6 +198,12 @@ pub fn make_widget_window(h: Handle) {
 pub fn show_no_activate(h: Handle) {
     unsafe {
         let _ = ShowWindow(hwnd(h), SW_SHOWNOACTIVATE);
+    }
+}
+
+pub fn hide(h: Handle) {
+    unsafe {
+        let _ = ShowWindow(hwnd(h), SW_HIDE);
     }
 }
 

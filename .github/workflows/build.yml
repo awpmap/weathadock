@@ -84,6 +84,22 @@ jobs:
           "WITH-WINDOW TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
           if ($app.HasExited) { Write-Error "WeathaDock exited early with code $($app.ExitCode)"; exit 1 }
           Stop-Process -Id $app.Id -Force
+          # Third run: docked on the taskbar. Record the bottom strip of the screen at full size.
+          Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"placement":"taskbar"}' | Set-Content (Join-Path $cfg 'settings.json')
+          $dock = Start-Process -FilePath target/release/weathadock.exe -PassThru
+          Start-Sleep -Seconds 20
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          Start-Sleep -Seconds 4
+          $bmp3 = New-Object System.Drawing.Bitmap $b.Width, 160
+          [System.Drawing.Graphics]::FromImage($bmp3).CopyFromScreen(0, ($b.Height - 160), 0, 0, (New-Object System.Drawing.Size $b.Width, 160))
+          $q.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 90L
+          $bmp3.Save("smoke/dock.jpg", $jpeg, $q)
+          Write-Output "SCREENSHOT3-BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock.jpg")) -split '(.{4000})' | Where-Object { $_ }
+          Write-Output "SCREENSHOT3-END"
+          Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
       # Run the installer the way a person would (double-click, no flags) and record its
       # window while it works, then the desktop once the app has opened.
       - name: Installer screenshots

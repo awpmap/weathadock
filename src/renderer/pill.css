@@ -54,3 +54,17 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 [data-glass="none"] .p-hint .gl, [data-glass="none"] .p-muted .gl { filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 2.5px rgba(0, 0, 0, 0.7)); stroke-width: 1.8; }
 [data-glass="none"] .p-alert { margin-right: 0; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); background: color-mix(in srgb, var(--sev) 42%, #141821); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sev) 60%, transparent), 0 1px 5px rgba(0, 0, 0, 0.35); }
 [data-glass="none"] .pill.has-alert { box-shadow: none; }
+
+/* docked on the taskbar: bare content that reads as part of the bar, in any glass style */
+.pill.is-dock, .pill.is-dock:hover { max-width: 700px; gap: 10px; padding: 0 6px 0 2px; background: none; box-shadow: none; border-radius: 8px; }
+.pill.is-dock .wx { font-size: 26px; }
+.pill.is-dock .p-temp { font-size: 17px; }
+.d-tx { display: inline-flex; flex-direction: column; justify-content: center; gap: 1px; line-height: 1.15; min-width: 0; }
+.d-tx b { font-size: 12.5px; font-weight: 600; color: var(--t1); overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.d-tx span { font-size: 11px; color: var(--t2); }
+.d-hours { display: inline-flex; align-items: center; gap: 16px; }
+.d-h { display: inline-flex; flex-direction: column; justify-content: center; gap: 2px; line-height: 1.15; }
+.d-h span { font-size: 10.5px; color: var(--t2); }
+.d-h b { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; }
+.pill.is-dock .d-h .wx { font-size: 15px; }
+[data-glass="none"] .d-tx span, [data-glass="none"] .d-h span { color: rgba(255, 255, 255, 0.78); font-weight: 500; }

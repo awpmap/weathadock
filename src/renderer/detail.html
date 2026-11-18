@@ -67,6 +67,18 @@
           </form>
         </div>
 
+        <h2 class="group-title">Placement</h2>
+        <div class="card set">
+          <div class="set-row">
+            <span class="set-ic" data-gl="pin"></span>
+            <div class="set-tx"><div class="set-name">Show the weather</div><div class="set-sub" id="placement-sub"></div></div>
+            <div class="seg" role="radiogroup" aria-label="Show the weather" data-seg="placement">
+              <button role="radio" data-val="desktop">On the desktop</button>
+              <button role="radio" data-val="taskbar">On the taskbar</button>
+            </div>
+          </div>
+        </div>
+
         <h2 class="group-title">Desktop widget</h2>
         <div class="card set">
           <div class="set-row">
@@ -74,12 +86,12 @@
             <div class="set-tx"><div class="set-name">Customize widget</div><div class="set-sub" id="cz-summary">Choose a style, what to show and how it is arranged.</div></div>
             <button class="btn is-primary" data-go="widget">Customize<span data-gl="chevron-right"></span></button>
           </div>
-          <div class="set-row">
+          <div class="set-row" data-desktop-only>
             <span class="set-ic" data-gl="eye"></span>
             <div class="set-tx"><div class="set-name">Show desktop widget</div><div class="set-sub">Keep the weather on your desktop.</div></div>
             <button class="switch" role="switch" data-set="showWidget" aria-label="Show desktop widget"></button>
           </div>
-          <div class="set-row">
+          <div class="set-row" data-desktop-only>
             <span class="set-ic" data-gl="cloud"></span>
             <div class="set-tx"><div class="set-name">When apps cover the widget</div><div class="set-sub" id="covered-sub"></div></div>
             <div class="seg" role="radiogroup" aria-label="When apps cover the widget" data-seg="coveredMode">

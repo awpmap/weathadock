@@ -75,6 +75,16 @@ fn flag(app: &AppHandle, key: &str) -> bool {
 fn settings_snapshot(app: &AppHandle) -> Value {
     shared(app).settings.lock().unwrap().clone()
 }
+/// The weather is docked on the taskbar instead of sitting on the desktop.
+fn docked(app: &AppHandle) -> bool {
+    setting(app, "placement") == "taskbar"
+}
+
+/// The desktop widget is switched on and not replaced by the taskbar dock.
+fn widget_enabled(app: &AppHandle) -> bool {
+    flag(app, "showWidget") && !docked(app)
+}
+
 fn active_location(app: &AppHandle) -> Option<Value> {
     settings::active_location(&shared(app).settings.lock().unwrap())
 }
@@ -315,8 +325,12 @@ fn build_menu(app: &AppHandle, for_widget: bool) -> tauri::Result<Menu<Wry>> {
             .item(&check("ontop", "Keep above other windows", "widgetOnTop")?)
             .item(&MenuItemBuilder::with_id("hide", "Hide widget").build(app)?);
     } else {
+        menu = if docked(app) {
+            menu.item(&MenuItemBuilder::with_id("undock", "Move weather to the desktop").build(app)?)
+        } else {
+            menu.item(&check("show", "Show desktop widget", "showWidget")?)
+        };
         menu = menu
-            .item(&check("show", "Show desktop widget", "showWidget")?)
             .item(&MenuItemBuilder::with_id("reset", "Reset widget and taskbar positions").build(app)?)
             .item(&MenuItemBuilder::with_id("settings", "Settings").build(app)?);
         if let Some(version) = app.state::<Updater>().is_ready() {
@@ -334,6 +348,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         "refresh" => spawn_refresh(app),
         "show" => apply_settings(app, &json!({ "showWidget": !flag(app, "showWidget") })),
         "hide" => apply_settings(app, &json!({ "showWidget": false })),
+        "undock" => apply_settings(app, &json!({ "placement": "desktop", "showWidget": true })),
         "lock" => apply_settings(app, &json!({ "lockPosition": !flag(app, "lockPosition") })),
         "ontop" => apply_settings(app, &json!({ "widgetOnTop": !flag(app, "widgetOnTop") })),
         "reset" => {
@@ -368,7 +383,7 @@ fn apply_tray_image(app: &AppHandle) {
     let Some(tray) = app.tray_by_id("main") else { return };
     let number = shared(app).tray_number.lock().unwrap().clone();
     let bytes = match (setting(app, "coveredMode").as_str(), number) {
-        (Some("tray"), Some(png)) => png,
+        (Some("tray"), Some(png)) if !docked(app) => png,
         _ => TRAY_PLAIN.to_vec(),
     };
     if let Ok(image) = tauri::image::Image::from_bytes(&bytes) {
@@ -478,7 +493,7 @@ fn create_widget_now(app: &AppHandle) {
     if let Some(h) = win32::handle_of(&w) {
         win32::make_widget_window(h);
     }
-    if flag(app, "showWidget") {
+    if widget_enabled(app) {
         show_widget(app);
     }
 }
@@ -514,6 +529,11 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
         let height = bar.bottom - bar.top;
         let horizontal = bar.right - bar.left > height * 3;
         if horizontal && height >= 30 {
+            if docked(app) {
+                // Docked: the empty stretch at the left end of a centered taskbar.
+                let margin = (height as f64 * 0.25) as i32;
+                return (bar.left + margin, bar.top, height);
+            }
             let right = tray.map(|t| t.left).filter(|&l| l > (bar.left + bar.right) / 2).unwrap_or(bar.right - 340) - 8;
             return (right - width, bar.top, height);
         }
@@ -530,7 +550,8 @@ fn place_pill(app: &AppHandle) {
     let width = st.sizes.lock().unwrap().get("pill").map(|s| s.0 as i32).unwrap_or(180);
     let (x, y, height) = pill_geometry(app, width);
     st.sizes.lock().unwrap().insert("pill".into(), (width as u32, height as u32));
-    let (x, y) = saved_point(&setting(app, "pillPos")).unwrap_or((x, y));
+    // The dock has one fixed home; only the floating pill remembers where it was dragged.
+    let (x, y) = if docked(app) { (x, y) } else { saved_point(&setting(app, "pillPos")).unwrap_or((x, y)) };
     let _ = w.set_size(PhysicalSize::new(width as u32, height as u32));
     let _ = w.set_position(PhysicalPosition::new(x, y));
 }
@@ -541,7 +562,7 @@ fn sync_pill(app: &AppHandle) {
 }
 
 fn sync_pill_now(app: &AppHandle) {
-    let wanted = setting(app, "coveredMode") == "taskbar";
+    let wanted = docked(app) || setting(app, "coveredMode") == "taskbar";
     match (wanted, window(app, "pill")) {
         (true, None) => {
             let built = WebviewWindowBuilder::new(app, "pill", page(app, "pill.html"))
@@ -696,7 +717,7 @@ fn quit(app: &AppHandle) {
 fn tick(app: &AppHandle) {
     let Some(widget) = window(app, "widget") else { return };
     let Some(handle) = win32::handle_of(&widget) else { return };
-    let widget_on = flag(app, "showWidget");
+    let widget_on = widget_enabled(app);
     let visible = widget.is_visible().unwrap_or(false);
     let on_top = flag(app, "widgetOnTop");
     let snap = win32::snapshot(handle);
@@ -787,24 +808,25 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
         }
     }
     if changed("widgetOnTop") && !changed("glass") {
-        if flag(app, "showWidget") {
+        if widget_enabled(app) {
             show_widget(app);
         } else if let Some(w) = window(app, "widget") {
             let _ = w.set_always_on_top(flag(app, "widgetOnTop"));
         }
     }
-    if changed("showWidget") {
-        if flag(app, "showWidget") {
+    if changed("showWidget") || changed("placement") {
+        if widget_enabled(app) {
             show_widget(app);
         } else if let Some(w) = window(app, "widget") {
             let _ = w.hide();
         }
     }
-    if changed("coveredMode") || changed("glass") {
+    if changed("coveredMode") || changed("glass") || changed("placement") {
         apply_tray_image(app);
         off_main(app, |app| {
             std::thread::sleep(Duration::from_millis(200));
             sync_pill_now(app);
+            place_pill(app);
         });
     }
     publish_settings(app);
@@ -977,7 +999,7 @@ fn move_by(app: AppHandle, window: WebviewWindow, dx: f64, dy: f64) {
     if (label != "widget" && label != "pill") || !dx.is_finite() || !dy.is_finite() {
         return;
     }
-    if label == "widget" && flag(&app, "lockPosition") {
+    if (label == "widget" && flag(&app, "lockPosition")) || (label == "pill" && docked(&app)) {
         return;
     }
     let scale = window.scale_factor().unwrap_or(1.0);
@@ -1040,7 +1062,7 @@ fn set_content_size(app: AppHandle, window: WebviewWindow, width: f64, height: f
             let _ = window.set_size(PhysicalSize::new(next.0, next.1));
         }
         "pill" => {
-            let width = px(width, 80.0, 360.0);
+            let width = px(width, 80.0, if docked(&app) { 720.0 } else { 360.0 });
             let previous = st.sizes.lock().unwrap().get("pill").copied().unwrap_or((0, (48.0 * scale) as u32));
             if previous.0 == width {
                 return;

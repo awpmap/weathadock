@@ -330,7 +330,7 @@
     glass: gp === 'clear' || gp === 'frosted' ? gp : 'none',
     layout: startPreset ? startPreset.id : 'full',
     widget: startPreset ? clone(startPreset.widget) : null,
-    coveredMode: 'tray', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10,
+    coveredMode: 'tray', placement: params.get('placement') === 'taskbar' ? 'taskbar' : 'desktop', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10,
     lockPosition: params.get('lock') === '1', snapToEdges: true, widgetOnTop: false, widgetOpacity: 100
   };
   if (params.get('widget')) {

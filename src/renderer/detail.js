@@ -568,6 +568,11 @@
     var ps = (window.WD_PRESETS || []).filter(function (p) { return p.id === s.layout; })[0];
     $('cz-summary').textContent = (ps ? 'Using the \u201c' + ps.name + '\u201d style' : 'Using your own custom layout') + ' \u00b7 ' + ({ clear: 'tinted glass', frosted: 'frosted' }[s.glass] || 'transparent') + '.';
     if (current === 'widget') window.WDCustomize.update(state, settings);
+    var docked = s.placement === 'taskbar';
+    $('placement-sub').textContent = docked
+      ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
+      : 'A widget on your desktop.';
+    document.querySelectorAll('[data-desktop-only]').forEach(function (r) { r.hidden = docked; });
     $('covered-sub').textContent = s.coveredMode === 'taskbar'
       ? 'A small weather pill appears on the taskbar.'
       : 'The tray icon shows the current temperature.';

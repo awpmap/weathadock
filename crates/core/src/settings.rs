@@ -3,9 +3,9 @@
 
 use serde_json::{json, Map, Value};
 
-const PUBLIC_KEYS: [&str; 14] = [
+const PUBLIC_KEYS: [&str; 15] = [
     "glass", "layout", "widget", "widgetSet", "lockPosition", "snapToEdges", "widgetOnTop", "widgetOpacity",
-    "coveredMode", "showWidget", "launchAtLogin", "alertNotifications", "refreshMinutes", "zip",
+    "coveredMode", "placement", "showWidget", "launchAtLogin", "alertNotifications", "refreshMinutes", "zip",
 ];
 const SHOW_KEYS: [&str; 17] = [
     "location", "updated", "refresh", "icon", "temp", "condition", "highLow", "feelsLike", "incoming", "timeline",
@@ -32,6 +32,7 @@ pub fn defaults() -> Value {
         "layout": "full",           // preset the widget started from, or "custom"
         "widget": widget_defaults(),
         "widgetSet": false,         // false until a widget config has been chosen (lets v1 layouts migrate)
+        "placement": "desktop",     // where the weather lives: desktop widget | docked on the taskbar
         "coveredMode": "tray",      // while apps cover the widget: tray temperature | taskbar pill
         "showWidget": true, "lockPosition": false, "snapToEdges": true, "widgetOnTop": false, "widgetOpacity": 100,
         "launchAtLogin": true, "alertNotifications": true, "refreshMinutes": 10,
@@ -79,6 +80,7 @@ pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
     };
     pick("glass", &[json!("none"), json!("clear"), json!("frosted")]);
     pick("coveredMode", &[json!("taskbar"), json!("tray")]);
+    pick("placement", &[json!("desktop"), json!("taskbar")]);
     pick("refreshMinutes", &[json!(5), json!(10), json!(15), json!(30)]);
     for key in ["showWidget", "launchAtLogin", "alertNotifications", "lockPosition", "snapToEdges", "widgetOnTop"] {
         if let Some(b) = patch[key].as_bool() {
@@ -132,7 +134,7 @@ pub fn load(stored: Option<Value>) -> Value {
     // Re-validate everything else so a hand-edited file cannot put the app in a bad state.
     let clean = sanitize_patch(&data.clone(), &data);
     let fallback = defaults();
-    for key in ["glass", "coveredMode", "refreshMinutes", "showWidget", "launchAtLogin", "alertNotifications",
+    for key in ["glass", "coveredMode", "placement", "refreshMinutes", "showWidget", "launchAtLogin", "alertNotifications",
         "lockPosition", "snapToEdges", "widgetOnTop", "widgetOpacity", "layout"] {
         data[key] = clean.get(key).cloned().unwrap_or_else(|| fallback[key].clone());
     }

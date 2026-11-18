@@ -100,6 +100,14 @@ jobs:
           Write-Output "SCREENSHOT3-BEGIN"
           [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock.jpg")) -split '(.{4000})' | Where-Object { $_ }
           Write-Output "SCREENSHOT3-END"
+          # The whole screen too: with the taskbar placement the desktop must be empty.
+          $bmp4 = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp4).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $small4 = New-Object System.Drawing.Bitmap $bmp4, ([int]($b.Width * 0.6)), ([int]($b.Height * 0.6))
+          $small4.Save("smoke/dock-desktop.jpg", $jpeg, $q)
+          Write-Output "SCREENSHOT4-BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock-desktop.jpg")) -split '(.{4000})' | Where-Object { $_ }
+          Write-Output "SCREENSHOT4-END"
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { "TRACE $_" }
           $env:WEATHADOCK_LOG = $null

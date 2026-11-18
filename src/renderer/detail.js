@@ -5,6 +5,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var SECTIONS = ['overview', 'hourly', 'daily', 'alerts', 'settings'];
   var state = null, settings = null, current = 'overview';
+  var places = { locations: [], activeZip: null }, update = null, refreshing = false;
   var openDays = null;            // Set of expanded daily dates
   var main = $('main'), tip = $('tip');
 
@@ -12,7 +13,6 @@
   document.querySelectorAll('[data-gl]').forEach(function (el) { el.innerHTML = I.gl(el.dataset.gl); });
   document.querySelectorAll('[data-wx]').forEach(function (el) { el.outerHTML = I.wx(el.dataset.wx, true); });
   $('tb-logo').innerHTML = I.wx('partly-cloudy', true);
-  $('btn-refresh').innerHTML = I.gl('refresh');
   document.querySelectorAll('[data-win]').forEach(function (b) {
     b.innerHTML = I.gl('win-' + (b.dataset.win === 'minimize' ? 'min' : b.dataset.win === 'maximize' ? 'max' : 'close'));
     b.addEventListener('click', function () { window.sky.windowControl(b.dataset.win); });
@@ -44,25 +44,65 @@
     if (a && a.dataset.action === 'refresh') doRefresh();
   });
 
+  function syncRefresh() {
+    var busy = refreshing || (state && state.status === 'loading');
+    [$('btn-refresh'), $('set-refresh')].forEach(function (b) { b.disabled = !!busy; b.classList.toggle('is-busy', !!busy); });
+    $('btn-refresh-tx').textContent = busy ? 'Refreshing…' : 'Refresh';
+  }
   function doRefresh() {
-    $('btn-refresh').classList.add('is-busy');
-    Promise.resolve(window.sky.refresh()).catch(function () {}).then(function () { $('btn-refresh').classList.remove('is-busy'); });
+    if (refreshing) return;
+    refreshing = true; syncRefresh();
+    Promise.resolve(window.sky.refresh()).catch(function () {}).then(function () { refreshing = false; syncRefresh(); });
   }
   $('btn-refresh').addEventListener('click', doRefresh);
+
+  /* ---------- location switcher (header menu) ---------- */
+  var locBtn = $('head-loc'), locMenu = $('loc-menu');
+  function closeMenu() { locMenu.hidden = true; locBtn.setAttribute('aria-expanded', 'false'); }
+  function openMenu() {
+    var ls = places.locations || [];
+    locMenu.innerHTML = '<div class="menu-h">Locations</div>' + ls.map(function (p) {
+      return '<button class="menu-i" role="menuitemradio" aria-checked="' + (p.zip === places.activeZip) + '" data-zip="' + esc(p.zip) + '">' + I.gl('check', 'gl-check') + '<span>' + esc(p.city) + ', ' + esc(p.state) + '</span><small>' + esc(p.zip) + '</small></button>';
+    }).join('') + '<div class="menu-sep"></div><button class="menu-i" role="menuitem" data-manage="1">' + I.gl('plus') + '<span>Add or manage locations</span></button>';
+    locMenu.hidden = false; locBtn.setAttribute('aria-expanded', 'true');
+    var f = locMenu.querySelector('[aria-checked="true"]') || locMenu.querySelector('.menu-i');
+    if (f) f.focus();
+  }
+  locBtn.addEventListener('click', function () { if (locMenu.hidden) openMenu(); else closeMenu(); });
+  locMenu.addEventListener('click', function (e) {
+    var b = e.target.closest('.menu-i'); if (!b) return;
+    closeMenu();
+    if (b.dataset.manage) { go('settings'); setTimeout(function () { $('zip').focus(); }, 60); }
+    else if (b.dataset.zip !== places.activeZip) pickPlace(b.dataset.zip);
+  });
+  locMenu.addEventListener('keydown', function (e) {
+    var items = [].slice.call(locMenu.querySelectorAll('.menu-i')), i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i + items.length - 1) % items.length].focus(); }
+    else if (e.key === 'Escape') { closeMenu(); locBtn.focus(); }
+  });
+  document.addEventListener('pointerdown', function (e) { if (!locMenu.hidden && !e.target.closest('.head-place')) closeMenu(); });
+  function pickPlace(zip) {
+    places = { locations: places.locations, activeZip: zip }; /* optimistic; main confirms via onLocations */
+    renderPlaces(); renderHead();
+    Promise.resolve(window.sky.setActiveLocation(zip)).catch(function () {});
+  }
 
   /* ---------- header ---------- */
   function renderHead() {
     var s = state;
     var loc = s && s.location;
-    $('head-loc').innerHTML = loc ? I.gl('pin') + '<span>' + esc(loc.city) + ', ' + esc(loc.state) + '</span><small>' + esc(loc.zip) + '</small>' : '';
+    var act = (places.locations || []).filter(function (p) { return p.zip === places.activeZip; })[0];
+    if (!loc && act) loc = act;
+    $('head-loc').innerHTML = I.gl('pin') + (loc ? '<span>' + esc(loc.city) + ', ' + esc(loc.state) + '</span><small>' + esc(loc.zip) + '</small>' : '<span>Choose a location</span>') + I.gl('chevron-down', 'head-chev');
     var upd = '';
     if (s) {
-      if (s.status === 'loading') upd = 'Updating…';
+      if (s.status === 'loading' || refreshing) upd = 'Updating…';
       else if (s.stale) upd = '<span class="is-stale">Offline · as of ' + esc(U.when(s.updatedAt, tz())) + '</span>';
       else if (s.updatedAt) upd = 'Updated ' + esc(U.time(s.updatedAt, tz()));
     }
     $('head-upd').innerHTML = upd;
-    $('btn-refresh').classList.toggle('is-busy', !!s && s.status === 'loading');
+    syncRefresh();
     var n = $('notice');
     if (s && s.stale && s.current) { n.hidden = false; n.innerHTML = I.gl('offline') + '<span>' + esc(s.error || 'Couldn\u2019t refresh the forecast.') + ' Last updated ' + esc(U.when(s.updatedAt, tz())) + '.</span>'; }
     else n.hidden = true;
@@ -482,15 +522,28 @@
   }
 
   /* ---------- settings ---------- */
-  var zipIn = $('zip'), zipStatus = $('zip-status'), zipSave = $('zip-save');
-  var zipToken = 0, zipTimer = null, zipResolved = null, zipDirty = false;
+  var zipIn = $('zip'), zipStatus = $('zip-status'), zipAdd = $('zip-add');
+  var ZIP_HINT = 'US ZIP code. The new place becomes the active one.';
+  var zipToken = 0, zipTimer = null, zipResolved = null, adding = false;
 
-  function setStatus(kind, html) { zipStatus.className = 'inline-status' + (kind ? ' is-' + kind : ''); zipStatus.innerHTML = html || ''; }
-  function currentZipStatus() {
-    var loc = state && state.location;
-    if (settings && settings.zip && loc && loc.zip === settings.zip) setStatus('ok', I.gl('check-circle') + '<span>' + esc(loc.city) + ', ' + esc(loc.state) + '</span>');
-    else setStatus('', '');
+  function setStatus(kind, html) { zipStatus.className = 'inline-status' + (kind ? ' is-' + kind : ''); zipStatus.innerHTML = html || ZIP_HINT; }
+
+  function renderPlaces() {
+    var ls = places.locations || [];
+    $('loc-list').innerHTML = ls.map(function (p) {
+      var on = p.zip === places.activeZip;
+      return '<div class="loc-row"><button class="loc-pick" role="radio" aria-checked="' + on + '" data-zip="' + esc(p.zip) + '"><i class="loc-radio"></i><span><div class="loc-name">' + esc(p.city) + ', ' + esc(p.state) + '</div><div class="loc-zip">' + esc(p.zip) + '</div></span></button>' +
+        (on ? '<span class="loc-tag">Showing now</span>' : '') +
+        (ls.length > 1 ? '<button class="loc-del" data-del="' + esc(p.zip) + '" aria-label="Remove ' + esc(p.city) + ', ' + esc(p.state) + '" title="Remove">' + I.gl('trash') + '</button>' : '') + '</div>';
+    }).join('');
   }
+  $('loc-list').addEventListener('click', function (e) {
+    var d = e.target.closest('[data-del]');
+    if (d) { Promise.resolve(window.sky.removeLocation(d.dataset.del)).catch(function () {}); return; }
+    var p = e.target.closest('.loc-pick');
+    if (p && p.dataset.zip !== places.activeZip) pickPlace(p.dataset.zip);
+  });
+
   function applySettings() {
     var s = settings;
     if (!s) return;
@@ -498,11 +551,13 @@
     document.querySelectorAll('[data-seg]').forEach(function (g) {
       g.querySelectorAll('button').forEach(function (b) { var on = String(s[g.dataset.seg]) === b.dataset.val; b.setAttribute('aria-checked', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; });
     });
-    document.querySelectorAll('#looks .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.glass === s.glass ? 'true' : 'false'); });
-    $('covered-sub').textContent = s.coveredMode === 'tray'
-      ? 'Only the tray icon stays visible, showing the temperature.'
-      : 'A small weather pill appears on the taskbar, plus the tray icon.';
-    if (!zipDirty && document.activeElement !== zipIn) { zipIn.value = s.zip || ''; zipSave.hidden = true; currentZipStatus(); }
+    var glass = s.glass === 'clear' || s.glass === 'frosted' ? s.glass : 'none';
+    document.querySelectorAll('#looks .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.glass === glass ? 'true' : 'false'); });
+    var lay = s.layout || 'full';
+    document.querySelectorAll('#lays .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.layout === lay ? 'true' : 'false'); });
+    $('covered-sub').textContent = s.coveredMode === 'taskbar'
+      ? 'A small weather pill appears on the taskbar.'
+      : 'The tray icon shows the current temperature.';
   }
   function patch(p) {
     settings = Object.assign({}, settings, p);
@@ -523,41 +578,72 @@
     });
   });
   document.querySelectorAll('#looks .look').forEach(function (b) { b.addEventListener('click', function () { patch({ glass: b.dataset.glass }); }); });
+  document.querySelectorAll('#lays .look').forEach(function (b) { b.addEventListener('click', function () { patch({ layout: b.dataset.layout }); }); });
 
   zipIn.addEventListener('input', function () {
     var v = zipIn.value.replace(/\D/g, '').slice(0, 5);
     if (v !== zipIn.value) zipIn.value = v;
-    clearTimeout(zipTimer); zipToken++; zipResolved = null; zipSave.hidden = true;
+    clearTimeout(zipTimer); zipToken++; zipResolved = null; zipAdd.disabled = true;
     zipIn.classList.remove('is-bad');
-    zipDirty = v !== ((settings && settings.zip) || '');
-    if (!zipDirty) { currentZipStatus(); return; }
-    if (v.length < 5) { setStatus('', v.length ? '<span style="color:var(--t3)">Enter all 5 digits</span>' : ''); return; }
+    if (v.length < 5) { setStatus('', ''); return; }
+    var have = (places.locations || []).filter(function (p) { return p.zip === v; })[0];
+    if (have) { setStatus('', I.gl('info') + esc(have.city) + ', ' + esc(have.state) + ' is already in your list.'); return; }
     var tk = zipToken;
     setStatus('busy', I.gl('refresh', 'spin') + 'Looking up ' + esc(v) + '…');
     zipTimer = setTimeout(function () {
       Promise.resolve(window.sky.lookupZip(v)).then(function (r) {
         if (tk !== zipToken) return;
-        if (r && r.ok) { zipResolved = r; setStatus('ok', I.gl('check-circle') + '<span>' + esc(r.city) + ', ' + esc(r.state) + '</span>'); zipSave.hidden = false; }
-        else { zipIn.classList.add('is-bad'); setStatus('bad', I.gl('info') + esc((r && r.error) || 'We couldn’t find that ZIP code.')); }
-      }).catch(function () { if (tk === zipToken) { zipIn.classList.add('is-bad'); setStatus('bad', I.gl('info') + 'Couldn’t check that ZIP code. Try again.'); } });
+        if (r && r.ok) { zipResolved = r; setStatus('ok', I.gl('check-circle') + '<span>' + esc(r.city) + ', ' + esc(r.state) + '</span>'); zipAdd.disabled = false; }
+        else { zipIn.classList.add('is-bad'); setStatus('bad', I.gl('info') + esc((r && r.error) || 'We couldn\u2019t find that ZIP code.')); }
+      }).catch(function () { if (tk === zipToken) { zipIn.classList.add('is-bad'); setStatus('bad', I.gl('info') + 'Couldn\u2019t check that ZIP code. Try again.'); } });
     }, 250);
   });
-  function saveZip() {
-    if (!zipResolved) return;
-    var r = zipResolved; zipResolved = null; zipSave.hidden = true; zipDirty = false;
-    setStatus('busy', I.gl('refresh', 'spin') + 'Switching to ' + esc(r.city) + ', ' + esc(r.state) + '…');
-    Promise.resolve(window.sky.setSettings({ zip: r.zip })).then(function (s) {
-      if (s) settings = s;
-      setStatus('ok', I.gl('check-circle') + '<span>' + esc(r.city) + ', ' + esc(r.state) + '</span>');
-    }).catch(function () { setStatus('bad', I.gl('info') + 'Couldn’t save the new location.'); });
-  }
-  zipSave.addEventListener('click', saveZip);
+  $('loc-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!zipResolved || adding) return;
+    var r = zipResolved; zipResolved = null; adding = true; zipAdd.disabled = true;
+    setStatus('busy', I.gl('refresh', 'spin') + 'Adding ' + esc(r.city) + ', ' + esc(r.state) + '…');
+    Promise.resolve(window.sky.addLocation(r.zip)).then(function (res) {
+      adding = false;
+      if (res && res.ok) { zipIn.value = ''; setStatus('', ''); }
+      else { zipIn.classList.add('is-bad'); setStatus('bad', I.gl('info') + esc((res && res.error) || 'Couldn\u2019t add that location.')); }
+    }).catch(function () { adding = false; setStatus('bad', I.gl('info') + 'Couldn\u2019t add that location.'); });
+  });
   zipIn.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') saveZip();
-    if (e.key === 'Escape') { zipDirty = false; zipIn.value = (settings && settings.zip) || ''; zipSave.hidden = true; zipIn.classList.remove('is-bad'); currentZipStatus(); }
+    if (e.key === 'Escape') { zipIn.value = ''; zipIn.dispatchEvent(new Event('input')); }
   });
   $('set-refresh').addEventListener('click', doRefresh);
   $('set-quit').addEventListener('click', function () { window.sky.quit(); });
+
+  /* ---------- updates ---------- */
+  function renderUpdate() {
+    var u = update, sub = $('upd-sub'), check = $('upd-check'), inst = $('upd-install'), bar = $('upd-bar');
+    if (!u) { $('upd-card').hidden = true; $('updates-title').hidden = true; $('tb-update').hidden = true; return; }
+    $('upd-card').hidden = false; $('updates-title').hidden = false;
+    $('upd-name').textContent = 'Skylight ' + (u.version || '');
+    var text = '', cls = '', busy = u.status === 'checking' || u.status === 'downloading';
+    var checked = u.checkedAt ? U.when(u.checkedAt, undefined) : '';
+    if (u.status === 'unsupported') text = 'Updates are available in the installed version.';
+    else if (u.status === 'checking') text = 'Checking for updates…';
+    else if (u.status === 'downloading') text = 'Downloading version ' + (u.newVersion || '') + (u.percent != null ? ' · ' + Math.round(u.percent) + '%' : '…');
+    else if (u.status === 'ready') { text = 'Version ' + (u.newVersion || '') + ' is ready. Restart Skylight to finish updating.'; cls = 'is-good'; }
+    else if (u.status === 'up-to-date') text = 'You\u2019re up to date' + (checked ? ' · checked ' + checked : '') + '.';
+    else if (u.status === 'error') { text = u.error || 'Couldn\u2019t check for updates.'; cls = 'is-bad'; }
+    else text = checked ? 'Last checked ' + checked + '.' : 'Skylight checks for updates automatically.';
+    sub.textContent = text; sub.className = 'set-sub ' + cls;
+    bar.hidden = u.status !== 'downloading';
+    $('upd-fill').style.width = Math.max(2, Math.min(100, u.percent || 0)) + '%';
+    check.hidden = u.status === 'unsupported' || u.status === 'ready';
+    check.disabled = busy; check.classList.toggle('is-busy', busy);
+    $('upd-check-tx').textContent = u.status === 'checking' ? 'Checking…' : u.status === 'downloading' ? 'Downloading…' : u.status === 'error' ? 'Try again' : 'Check for updates';
+    inst.hidden = u.status !== 'ready';
+    $('tb-update').hidden = u.status !== 'ready';
+  }
+  $('upd-check').addEventListener('click', function () {
+    Promise.resolve(window.sky.checkForUpdates()).then(function (u) { if (u) { update = u; renderUpdate(); } }).catch(function () {});
+  });
+  $('upd-install').addEventListener('click', function () { window.sky.installUpdate(); });
+  $('tb-update').addEventListener('click', function () { go('settings'); $('updates-title').scrollIntoView({ block: 'start' }); });
 
   function renderSettingsState() {
     var s = state;
@@ -573,13 +659,12 @@
       $(p[0]).className = 'src-dot' + (known ? (p[1] ? ' is-on' : ' is-off') : '');
       $(p[0] + '-tx').textContent = known ? (p[1] ? 'Connected' : 'No response') : '';
     });
-    if (!zipDirty && document.activeElement !== zipIn) currentZipStatus();
   }
 
   /* ---------- render ---------- */
   function renderSection() {
-    if (!state) return;
     renderHead();
+    if (!state) return;
     renderSettingsState();
     if (current === 'settings') return;
     var el = $('sec-' + current);
@@ -596,6 +681,11 @@
     sky.onSettings(function (s) { settings = s; applySettings(); });
     sky.onNavigate(function (sec) { go(sec); });
     sky.getSettings().then(function (s) { settings = s; applySettings(); });
+    if (sky.onLocations) sky.onLocations(function (v) { if (v) { places = v; renderPlaces(); renderHead(); } });
+    if (sky.getLocations) sky.getLocations().then(function (v) { if (v) { places = v; renderPlaces(); renderHead(); } }).catch(function () {});
+    if (sky.onUpdateState) sky.onUpdateState(function (u) { update = u; renderUpdate(); });
+    if (sky.getUpdateState) sky.getUpdateState().then(function (u) { update = u; renderUpdate(); }).catch(function () { renderUpdate(); });
+    else renderUpdate();
     go(current);
     sky.getState().then(function (s) { state = s; renderSection(); });
   });

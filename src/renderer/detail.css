@@ -318,3 +318,5 @@ button.card:hover, .card.is-link:hover { background: var(--fill-2); }
 #upd-sub.is-good { color: var(--good); }
 .btn.is-busy { pointer-events: none; }
 .btn.is-busy .gl { animation: sk-rot 0.9s linear infinite; }
+
+.set-compact .set-row { min-height: 52px; padding-top: 7px; padding-bottom: 7px; }

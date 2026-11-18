@@ -75,7 +75,7 @@
             <button class="btn is-primary" data-go="widget">Customize<span data-gl="chevron-right"></span></button>
           </div>
           <div class="set-row">
-            <span class="set-ic" data-gl="layers"></span>
+            <span class="set-ic" data-gl="eye"></span>
             <div class="set-tx"><div class="set-name">Show desktop widget</div><div class="set-sub">Keep the weather on your desktop.</div></div>
             <button class="switch" role="switch" data-set="showWidget" aria-label="Show desktop widget"></button>
           </div>
@@ -89,7 +89,26 @@
           </div>
         </div>
 
-        <h2 class="group-title">Behavior</h2>
+        <h2 class="group-title">Widget behavior</h2>
+        <div class="card set set-compact">
+          <div class="set-row">
+            <span class="set-ic" data-gl="lock"></span>
+            <div class="set-tx"><div class="set-name">Lock position</div><div class="set-sub">The widget can’t be dragged.</div></div>
+            <button class="switch" role="switch" data-set="lockPosition" aria-label="Lock position"></button>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="snap"></span>
+            <div class="set-tx"><div class="set-name">Snap to screen edges</div><div class="set-sub">Line up with the edges while dragging.</div></div>
+            <button class="switch" role="switch" data-set="snapToEdges" aria-label="Snap to screen edges"></button>
+          </div>
+          <div class="set-row">
+            <span class="set-ic" data-gl="layers"></span>
+            <div class="set-tx"><div class="set-name">Keep above other windows</div><div class="set-sub">Instead of sitting on the desktop.</div></div>
+            <button class="switch" role="switch" data-set="widgetOnTop" aria-label="Keep above other windows"></button>
+          </div>
+        </div>
+
+        <h2 class="group-title">General</h2>
         <div class="card set">
           <div class="set-row">
             <span class="set-ic" data-gl="bell"></span>

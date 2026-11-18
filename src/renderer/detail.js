@@ -56,6 +56,18 @@
   }
   $('btn-refresh').addEventListener('click', doRefresh);
 
+  /* keyboard: Ctrl+R refresh, Ctrl+1..5 sections, Esc closes an open menu */
+  var KEY_SECTIONS = ['overview', 'hourly', 'daily', 'alerts', 'settings'];
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!locMenu.hidden) { closeMenu(); locBtn.focus(); e.preventDefault(); }
+      return;
+    }
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    if (e.key === 'r' || e.key === 'R') { e.preventDefault(); doRefresh(); }
+    else if (e.key >= '1' && e.key <= '5') { e.preventDefault(); go(KEY_SECTIONS[Number(e.key) - 1]); }
+  });
+
   /* ---------- location switcher (header menu) ---------- */
   var locBtn = $('head-loc'), locMenu = $('loc-menu');
   function closeMenu() { locMenu.hidden = true; locBtn.setAttribute('aria-expanded', 'false'); }
@@ -552,9 +564,7 @@
       g.querySelectorAll('button').forEach(function (b) { var on = String(s[g.dataset.seg]) === b.dataset.val; b.setAttribute('aria-checked', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; });
     });
     var glass = s.glass === 'clear' || s.glass === 'frosted' ? s.glass : 'none';
-    document.querySelectorAll('#looks .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.glass === glass ? 'true' : 'false'); });
     var lay = s.layout || 'full';
-    document.querySelectorAll('#lays .look').forEach(function (b) { b.setAttribute('aria-checked', b.dataset.layout === lay ? 'true' : 'false'); });
     var ps = (window.WD_PRESETS || []).filter(function (p) { return p.id === s.layout; })[0];
     $('cz-summary').textContent = (ps ? 'Using the \u201c' + ps.name + '\u201d style' : 'Using your own custom layout') + ' \u00b7 ' + ({ clear: 'tinted glass', frosted: 'frosted' }[s.glass] || 'transparent') + '.';
     if (current === 'widget') window.WDCustomize.update(state, settings);
@@ -580,8 +590,6 @@
       e.preventDefault(); nx.focus(); nx.click();
     });
   });
-  document.querySelectorAll('#looks .look').forEach(function (b) { b.addEventListener('click', function () { patch({ glass: b.dataset.glass }); }); });
-  document.querySelectorAll('#lays .look').forEach(function (b) { b.addEventListener('click', function () { patch({ layout: b.dataset.layout }); }); });
 
   zipIn.addEventListener('input', function () {
     var v = zipIn.value.replace(/\D/g, '').slice(0, 5);

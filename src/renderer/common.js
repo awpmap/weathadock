@@ -133,7 +133,7 @@
     });
     root.addEventListener('pointermove', function (e) {
       if (!st || e.pointerId !== st.id) return;
-      if (st.locked) return;
+      if (st.locked) { if (Math.abs(e.screenX - st.x) > 4 || Math.abs(e.screenY - st.y) > 4) st.moved = true; return; }
       if (!st.drag) {
         if (Math.abs(e.screenX - st.x) <= 4 && Math.abs(e.screenY - st.y) <= 4) return;
         st.drag = true;
@@ -148,7 +148,7 @@
       try { root.releasePointerCapture(e.pointerId); } catch (err) {}
       root.classList.remove('is-dragging');
       if (s.drag) { window.sky && window.sky.dragEnd(); }
-      else if (!cancelled) onClick(s.target);
+      else if (!cancelled && !s.moved) onClick(s.target);
     }
     root.addEventListener('pointerup', function (e) { end(e, false); });
     root.addEventListener('pointercancel', function (e) { end(e, true); });

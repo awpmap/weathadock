@@ -4,3 +4,5 @@ dist/
 settings.json
 *.local.json
 .env*
+target/
+src-tauri/gen/

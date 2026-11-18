@@ -41,7 +41,7 @@
       widget: cfg('horizontal', 'small', 'left', 6, 5, ['location', 'icon', 'temp', 'condition', 'highLow', 'incoming', 'alerts']) },
     { id: 'hero', name: 'Hero', description: 'A big centered temperature.',
       widget: cfg('vertical', 'large', 'center', 6, 5, ['location', 'icon', 'temp', 'condition', 'highLow', 'alerts']) },
-    { id: 'number', name: 'Just the number', description: 'Only the temperature, extra large.',
+    { id: 'number', name: 'Big number', description: 'Only the temperature, extra large.',
       widget: cfg('vertical', 'xlarge', 'left', 6, 5, ['temp']) },
     { id: 'today', name: 'Today', description: 'Now plus the next eight hours.',
       widget: cfg('horizontal', 'medium', 'left', 8, 5, ['icon', 'temp', 'condition', 'highLow', 'incoming', 'hourly', 'alerts']) },

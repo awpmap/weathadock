@@ -1,0 +1,121 @@
+/* WeathaDock "Customize widget" editor */
+.cz { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 42%); gap: 20px; align-items: start; padding-top: 4px; }
+.cz-controls { min-width: 0; grid-column: 1; grid-row: 1; }
+.cz-controls > .group-title { margin-top: 20px; }
+
+/* ---- live preview ---- */
+.cz-preview { grid-column: 2; grid-row: 1; position: sticky; top: 4px; }
+.cz-stage {
+  position: relative; height: min(440px, calc(100vh - 176px)); min-height: 180px; border-radius: var(--r-card); overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line-strong); isolation: isolate; pointer-events: none; user-select: none;
+}
+.cz-stage::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12); pointer-events: none; }
+.cz-stage[data-bg="dark"], .cz-bgs [data-bg="dark"], .cz-thumb {
+  background: radial-gradient(110% 80% at 85% 8%, #3d3186 0%, transparent 58%), radial-gradient(90% 80% at 8% 92%, #0e5362 0%, transparent 62%), #0b0d18;
+}
+.cz-stage[data-bg="bright"], .cz-bgs [data-bg="bright"] {
+  background: radial-gradient(60% 50% at 82% 14%, #fffdf2 0%, transparent 70%), linear-gradient(165deg, #9fd6ff 0%, #e6f4ff 52%, #fff3d4 100%);
+}
+.cz-stage[data-bg="photo"], .cz-bgs [data-bg="photo"] {
+  background:
+    radial-gradient(150% 46% at 22% 108%, #16302d 0 62%, transparent 62.6%),
+    radial-gradient(140% 52% at 86% 112%, #24493f 0 62%, transparent 62.6%),
+    radial-gradient(90% 34% at 50% 80%, #56717d 0 62%, transparent 62.8%),
+    radial-gradient(circle at 68% 47%, #fff3cf 0 5%, rgba(255, 226, 170, 0.55) 6.5%, transparent 24%),
+    linear-gradient(180deg, #2d4a85 0%, #7f73ab 30%, #e58f7e 52%, #fbc98b 66%, #f7dcae 100%);
+}
+.cz-scale { position: absolute; left: 50%; top: 50%; width: max-content; transform: translate(-50%, -50%); transform-origin: 50% 50%; transition: opacity 0.15s var(--ease); }
+.cz-scale .wv { max-width: none; }
+.cz-scale .wv-panel { cursor: default; }
+/* in the real window the frosted style is blurred by Windows; simulate it here */
+.cz-stage .wv[data-glass="frosted"] .wv-panel { border-radius: 8px; backdrop-filter: blur(18px) saturate(1.4); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+.cz-stage .wv[data-glass="frosted"] { padding: 8px; }
+
+.cz-stage-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 40px; padding: 0 2px 0 4px; }
+.cz-live { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--t3); }
+.cz-live i { width: 6px; height: 6px; border-radius: 50%; background: var(--good, #6fdc9a); }
+.cz-bgs { display: inline-flex; gap: 7px; }
+.cz-bgs button { width: 30px; height: 20px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28); transition: box-shadow 0.15s var(--ease), transform 0.1s var(--ease); }
+.cz-bgs button:hover { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6); }
+.cz-bgs button:active { transform: scale(0.94); }
+.cz-bgs button[aria-checked="true"] { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 0 2px var(--accent); }
+
+/* ---- style gallery ---- */
+.cz-h { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-bottom: 8px; }
+.cz-h .group-title { margin: 0 0 0 2px; }
+.cz-status { font-size: 12px; font-weight: 600; color: var(--accent); padding: 2px 9px; border-radius: 10px; background: rgba(124, 192, 255, 0.13); }
+.cz-status.is-custom { color: var(--t2); background: var(--fill-2); }
+.cz-reset { margin-left: auto; height: 28px; padding: 0 11px; font-size: 12.5px; }
+.cz-reset:disabled { visibility: hidden; }
+.cz-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.cz-style {
+  display: flex; flex-direction: column; justify-content: flex-start; text-align: left; padding: 5px 5px 7px; border-radius: 11px; background: var(--fill-1); box-shadow: inset 0 0 0 1px var(--line);
+  transition: background 0.15s var(--ease), box-shadow 0.15s var(--ease), transform 0.1s var(--ease);
+}
+.cz-style:hover { background: var(--fill-2); }
+.cz-style:active { transform: scale(0.985); }
+.cz-style[aria-checked="true"] { background: rgba(124, 192, 255, 0.11); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cz-thumb { position: relative; display: block; height: 66px; border-radius: 7px; overflow: hidden; pointer-events: none; }
+.cz-style-n { display: block; margin: 6px 3px 0; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-style-d { display: none; }
+
+/* ---- option rows ---- */
+.cz-card { padding: 2px 16px; }
+.cz-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 52px; padding: 8px 0; flex-wrap: wrap; }
+.cz-row + .cz-row { border-top: 1px solid var(--line); }
+.cz-row-n { font-size: 13.5px; font-weight: 500; }
+.cz-row-s { font-size: 12px; color: var(--t3); margin-top: 1px; }
+.cz [data-cz] button .gl { font-size: 16px; display: block; }
+
+.cz-range { display: flex; align-items: center; gap: 12px; }
+.cz-range output { width: 40px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cz-range input {
+  -webkit-appearance: none; appearance: none; width: 150px; height: 20px; margin: 0; background: transparent; cursor: pointer; --p: 100%;
+}
+.cz-range input::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent) 0 var(--p), rgba(255, 255, 255, 0.2) var(--p) 100%);
+}
+.cz-range input::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%;
+  background: radial-gradient(circle, var(--accent) 0 38%, #2a3445 42%); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: transform 0.12s var(--ease);
+}
+.cz-range input:hover::-webkit-slider-thumb { transform: scale(1.1); }
+.cz-range input:active::-webkit-slider-thumb { transform: scale(0.94); }
+.cz-range input:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+/* ---- what to show ---- */
+.cz-show { padding: 4px 16px; }
+.cz-group { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; padding: 12px 0; align-items: start; }
+.cz-group + .cz-group { border-top: 1px solid var(--line); }
+.cz-group-n { font-size: 12.5px; font-weight: 600; color: var(--t2); line-height: 30px; }
+.cz-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.cz-chip {
+  display: inline-flex; align-items: center; gap: 0; height: 30px; padding: 0 12px; border-radius: 15px; font-size: 12.5px; font-weight: 500; color: var(--t2);
+  box-shadow: inset 0 0 0 1px var(--line-strong); white-space: nowrap;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease), box-shadow 0.15s var(--ease), transform 0.1s var(--ease);
+}
+.cz-chip .gl { font-size: 14px; width: 0; opacity: 0; margin-right: 0; transition: width 0.16s var(--ease), opacity 0.16s var(--ease), margin 0.16s var(--ease); }
+.cz-chip:hover { color: var(--t1); background: var(--fill-1); }
+.cz-chip:active { transform: scale(0.96); }
+.cz-chip[aria-checked="true"] { color: #07131f; background: var(--accent); box-shadow: none; font-weight: 600; }
+.cz-chip[aria-checked="true"] .gl { width: 14px; opacity: 1; margin-right: 5px; }
+.cz-chip[aria-checked="true"]:hover { background: #9ed2ff; }
+.cz-counts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; }
+.cz-count { display: inline-flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--t2); transition: opacity 0.15s var(--ease); }
+.cz-count.is-off { opacity: 0.38; pointer-events: none; }
+.cz-count .seg button { height: 24px; padding: 0 10px; font-size: 12px; }
+
+/* ---- narrow window: preview pinned on top ---- */
+@media (max-width: 900px) {
+  .cz { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .cz-controls { grid-row: 2; }
+  .cz-preview { grid-column: 1; grid-row: 1; top: 0; z-index: 3; margin: 0 -6px; padding: 0 6px; background: var(--glass-detail) fixed; }
+  .cz-stage { height: 176px; min-height: 0; }
+  .cz-stage-bar { height: 36px; box-shadow: 0 1px 0 var(--line); margin-bottom: 8px; }
+  .cz-group { grid-template-columns: 78px minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cz-chip .gl, .cz-scale { transition: none; }
+}

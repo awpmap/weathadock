@@ -1,15 +1,15 @@
 {
-  "name": "skylight-weather",
-  "productName": "Skylight",
+  "name": "weathadock",
+  "productName": "WeathaDock",
   "version": "1.0.0",
-  "description": "A translucent desktop weather widget for Windows with taskbar and tray presence.",
+  "description": "A fully transparent desktop weather widget for Windows with tray and taskbar presence.",
   "main": "src/main/main.js",
-  "author": "Skylight Weather",
+  "author": "WeathaDock",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "dist": "electron-builder --win nsis portable --x64",
+    "dist": "electron-builder --win --x64",
     "dist:zip": "electron-builder --win zip --x64 -c.win.signAndEditExecutable=false"
   },
   "dependencies": {
@@ -21,15 +21,16 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "app.skylight.weather",
-    "productName": "Skylight",
+    "appId": "app.weathadock.desktop",
+    "productName": "WeathaDock",
     "files": [
       "src/**/*",
-      "build/icon.png",
       "package.json",
       "!node_modules/koffi/{src,vendor,doc}/**",
       "!node_modules/koffi/build/koffi/{darwin,linux,freebsd,openbsd,musl}*/**",
-      "!node_modules/koffi/build/koffi/win32_ia32/**"
+      "!node_modules/koffi/build/koffi/win32_ia32/**",
+      "build/icon.png",
+      "build/tray.png"
     ],
     "asarUnpack": [
       "node_modules/koffi/**/*"
@@ -38,15 +39,26 @@
       "output": "dist"
     },
     "win": {
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
-    },
-    "portable": {
-      "artifactName": "Skylight-portable-${version}.exe"
+      "artifactName": "WeathaDock-Setup-${version}.${ext}",
+      "shortcutName": "WeathaDock",
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "WeathaDock"
     },
     "publish": [
       {
@@ -55,7 +67,8 @@
         "repo": "weathadock",
         "releaseType": "release"
       }
-    ]
+    ],
+    "copyright": "WeathaDock"
   },
   "repository": {
     "type": "git",

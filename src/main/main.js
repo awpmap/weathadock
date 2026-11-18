@@ -3,15 +3,17 @@ const {
   app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, shell, Notification, powerMonitor, net,
 } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const os = require('os');
 const { Store, sanitizePatch } = require('./store');
 const weather = require('./weather');
 const native = require('./native');
 const { createUpdater } = require('./updater');
 
-const APP_NAME = 'Skylight';
+const APP_NAME = 'WeathaDock';
 const RENDERER = path.join(__dirname, '..', 'renderer');
 const ICON = path.join(__dirname, '..', '..', 'build', 'icon.png');
+const TRAY_ICON = path.join(__dirname, '..', '..', 'build', 'tray.png');
 const IS_WIN = process.platform === 'win32';
 // Acrylic backdrops need Windows 11 22H2 (build 22621) or newer.
 const HAS_ACRYLIC = IS_WIN && Number(os.release().split('.')[2] || 0) >= 22621;
@@ -23,7 +25,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('second-instance', () => openDetail('overview'));
 }
-app.setAppUserModelId('app.skylight.weather');
+app.setAppUserModelId('app.weathadock.desktop');
 
 let store;
 let tray = null;
@@ -180,7 +182,7 @@ function updateTray() {
       })),
     }] : []),
     { type: 'separator' },
-    { label: 'Open Skylight', click: () => openDetail('overview') },
+    { label: 'Open WeathaDock', click: () => openDetail('overview') },
     ...(state.alerts.length ? [{ label: `Alerts (${state.alerts.length})`, click: () => openDetail('alerts') }] : []),
     { label: 'Refresh now', click: () => refresh() },
     {
@@ -200,7 +202,8 @@ function updateTray() {
 }
 
 function createTray() {
-  const base = nativeImage.createFromPath(ICON);
+  let base = nativeImage.createFromPath(TRAY_ICON);
+  if (base.isEmpty()) base = nativeImage.createFromPath(ICON);
   trayPlainImage = base.isEmpty() ? nativeImage.createEmpty() : multiRes(base);
   tray = new Tray(trayPlainImage);
   tray.on('click', () => openDetail('overview'));
@@ -596,6 +599,15 @@ ipcMain.on('sky:installUpdate', () => { quitting = true; updater.install(); });
 // ---------------------------------------------------------------- lifecycle
 
 app.whenReady().then(() => {
+  // Carry over settings saved by the first preview build, which used a placeholder name.
+  try {
+    const current = path.join(app.getPath('userData'), 'settings.json');
+    const previous = path.join(app.getPath('appData'), 'Skylight', 'settings.json');
+    if (!fs.existsSync(current) && fs.existsSync(previous)) {
+      fs.mkdirSync(path.dirname(current), { recursive: true });
+      fs.copyFileSync(previous, current);
+    }
+  } catch (e) { /* not important: setup simply runs again */ }
   store = new Store(app.getPath('userData'));
   Menu.setApplicationMenu(null);
   let announced = null;
@@ -603,7 +615,7 @@ app.whenReady().then(() => {
     broadcast('sky:updateState', u);
     if (u.status === 'ready' && announced !== u.newVersion && Notification.isSupported()) {
       announced = u.newVersion;
-      const n = new Notification({ title: `${APP_NAME} ${u.newVersion} is ready`, body: 'It installs the next time Skylight restarts. Click to restart now.', icon: ICON });
+      const n = new Notification({ title: `${APP_NAME} ${u.newVersion} is ready`, body: 'It installs the next time WeathaDock restarts. Click to restart now.', icon: ICON });
       n.on('click', () => { quitting = true; updater.install(); });
       n.show();
     }

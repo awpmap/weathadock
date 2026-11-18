@@ -1,4 +1,4 @@
-# Skylight
+# WeathaDock
 
 A translucent desktop weather widget for Windows 10 and 11.
 
@@ -39,7 +39,7 @@ On Windows:
 npm run dist
 ```
 
-This writes an installer (`Skylight Setup 1.0.0.exe`) and a portable exe to `dist/`.
+This writes an installer (`WeathaDock-Setup-<version>.exe`) to `dist/`.
 The included GitHub Actions workflow does the same on every push and attaches the files to the run.
 
 ## How it works
@@ -55,7 +55,7 @@ The included GitHub Actions workflow does the same on every push and attaches th
 Glass styles: **Clear** is a truly transparent window (the wallpaper shows through, sharp).
 **Frosted** uses Windows 11 acrylic blur and needs Windows 11 22H2 or newer.
 
-Settings are stored in `%APPDATA%\Skylight\settings.json`.
+Settings are stored in `%APPDATA%\WeathaDock\settings.json`.
 
 ## Tests
 

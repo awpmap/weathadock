@@ -4,7 +4,7 @@
 // WeatherState shape described in docs/UI-CONTRACT.md. No Electron imports, so it can be
 // unit tested with plain Node.
 
-const USER_AGENT = 'SkylightWeatherDesktop/1.0 (desktop weather widget)';
+const USER_AGENT = 'WeathaDockDesktop/1.0 (desktop weather widget)';
 const WET_THRESHOLD = 0.004; // inches per 15 minutes (about 0.1 mm)
 
 const STATES = {

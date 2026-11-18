@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
-          name: Skylight-windows
+          name: WeathaDock-windows
           path: |
             dist/*.exe
           if-no-files-found: error

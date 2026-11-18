@@ -107,7 +107,7 @@ test('merges both sources', async () => {
   assert.equal(s.nextPrecip.headline, 'Rain starting in 23 min');
   assert.deepEqual(s.alerts.map((a) => a.id), ['b', 'a']);
   const nwsCall = f.calls.find((c) => c.url.includes('weather.gov'));
-  assert.match(nwsCall.init.headers['User-Agent'], /Skylight/);
+  assert.match(nwsCall.init.headers['User-Agent'], /WeathaDock/);
 });
 
 test('falls back to Open-Meteo alone', async () => {

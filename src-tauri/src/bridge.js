@@ -38,6 +38,8 @@
     setContentSize: function (w, h) { call('set_content_size', { width: w, height: h }); },
     setTrayIcon: function (dataUrl) { call('set_tray_icon', { dataUrl: dataUrl }); },
     showContextMenu: function () { call('show_context_menu'); },
+    getDock: function () { return invoke('get_dock'); },
+    onDock: on('sky:dock'),
     getUpdateState: function () { return invoke('get_update_state'); },
     onUpdateState: on('sky:updateState'),
     checkForUpdates: function () { return invoke('check_for_updates'); },

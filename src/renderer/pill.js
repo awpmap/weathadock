@@ -3,7 +3,7 @@
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var root = document.getElementById('root');
-  var state = null, last = '', dock = false;
+  var state = null, last = '', dock = false, wantDock = false, room = 0;
 
   function shortEvent(ev) {
     /* "Severe Thunderstorm Warning" -> "Severe T-Storm Warning"; keep the official wording otherwise */
@@ -43,7 +43,15 @@
     }
     var sig = cls + html;
     if (sig !== last) { last = sig; root.className = cls; root.innerHTML = html; }
+    fit();
     reportSize();
+  }
+
+  /* Docked: drop the least important parts until the strip fits the free taskbar space. */
+  function fit() {
+    root.removeAttribute('data-fit');
+    if (!dock) return;
+    for (var level = 1; level <= 4 && root.scrollWidth > room; level++) root.setAttribute('data-fit', level);
   }
 
   function reportSize() {
@@ -57,9 +65,22 @@
   });
 
   U.ready().then(function (sky) {
-    function place(st) { dock = !!st && st.placement === 'taskbar'; render(); }
+    var glass = document.documentElement.dataset.glass;
+    function apply() {
+      dock = wantDock && room > 0;
+      /* the docked strip is always bare content, whatever the widget's glass style */
+      document.documentElement.dataset.glass = dock ? 'none' : glass;
+      last = ''; render();
+    }
+    function place(st) { wantDock = !!st && st.placement === 'taskbar'; apply(); }
+    function bar(d) {
+      room = (d && d.room) || 0;
+      document.documentElement.dataset.bar = d && d.light ? 'light' : 'dark';
+      apply();
+    }
     sky.onSettings(place);
     sky.getSettings().then(place);
+    if (sky.onDock) { sky.onDock(bar); sky.getDock().then(bar); }
     sky.onState(function (s) { state = s; render(); });
     sky.getState().then(function (s) { state = s; render(); });
     new ResizeObserver(reportSize).observe(root);

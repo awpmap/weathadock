@@ -181,3 +181,50 @@ pub fn taskbar_rects() -> Option<(Rect, Option<Rect>)> {
 pub fn handle_of(window: &tauri::WebviewWindow) -> Option<Handle> {
     window.hwnd().ok().map(|h| h.0 as isize)
 }
+
+/// The empty stretch of the primary taskbar to the left of the Start button, as physical
+/// `(left, right)` x coordinates. With centered taskbar icons this is the wide free area a
+/// docked weather strip can use; with left-aligned icons it is empty or a few pixels.
+/// Windows 11 draws the taskbar without child windows, so the buttons are located through
+/// UI Automation. Called only when the strip is placed, never on a timer.
+pub fn taskbar_free_left() -> Option<(i32, i32)> {
+    use windows::core::BSTR;
+    use windows::Win32::System::Variant::VARIANT;
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_Descendants, UIA_AutomationIdPropertyId};
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+        let bar = FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok()?;
+        let bar_rect = rect_of(bar, false)?;
+        let root = uia.ElementFromHandle(bar).ok()?;
+        let find = |id: &str| {
+            let condition = uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &VARIANT::from(BSTR::from(id))).ok()?;
+            root.FindFirst(TreeScope_Descendants, &condition).ok()?.CurrentBoundingRectangle().ok()
+        };
+        let start = find("StartButton")?;
+        // The Windows Widgets button, when switched on, takes the far left of a centered taskbar.
+        let left = find("WidgetsButton").filter(|w| w.right > w.left && w.left < start.left).map_or(bar_rect.left, |w| w.right);
+        Some((left, start.left))
+    }
+}
+
+/// Whether Windows is set to a light taskbar ("Light" Windows mode).
+pub fn taskbar_is_light() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut value = 0u32;
+    let mut size = 4u32;
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("SystemUsesLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut core::ffi::c_void),
+            Some(&mut size),
+        )
+        .is_ok()
+            && value == 1
+    }
+}

@@ -56,7 +56,7 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 [data-glass="none"] .pill.has-alert { box-shadow: none; }
 
 /* docked on the taskbar: bare content that reads as part of the bar, in any glass style */
-.pill.is-dock, .pill.is-dock:hover { max-width: 700px; gap: 10px; padding: 0 6px 0 2px; background: none; box-shadow: none; border-radius: 8px; }
+.pill.is-dock, .pill.is-dock:hover { max-width: none; gap: 10px; padding: 0 6px 0 2px; background: none; box-shadow: none; border-radius: 8px; }
 .pill.is-dock .wx { font-size: 26px; }
 .pill.is-dock .p-temp { font-size: 17px; }
 .d-tx { display: inline-flex; flex-direction: column; justify-content: center; gap: 1px; line-height: 1.15; min-width: 0; }
@@ -68,3 +68,17 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 .d-h b { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; }
 .pill.is-dock .d-h .wx { font-size: 15px; }
 [data-glass="none"] .d-tx span, [data-glass="none"] .d-h span { color: rgba(255, 255, 255, 0.78); font-weight: 500; }
+/* not enough room: fewer hours, then none, then no hint, then no words */
+.pill.is-dock[data-fit] .d-h:nth-child(n+3) { display: none; }
+.pill.is-dock[data-fit="2"] .d-hours, .pill.is-dock[data-fit="3"] .d-hours, .pill.is-dock[data-fit="4"] .d-hours,
+.pill.is-dock[data-fit="2"] .p-sep:last-of-type, .pill.is-dock[data-fit="3"] .p-sep, .pill.is-dock[data-fit="4"] .p-sep { display: none; }
+.pill.is-dock[data-fit="3"] .p-hint, .pill.is-dock[data-fit="4"] .p-hint { display: none; }
+.pill.is-dock[data-fit="4"] .d-tx { display: none; }
+
+/* light taskbar: dark text, no halo */
+[data-bar="light"][data-glass="none"] body { color: #1b1f27; text-shadow: none; }
+[data-bar="light"][data-glass="none"] .pill { --t1: #1b1f27; --t2: #4a5261; --t4: #7a8290; }
+[data-bar="light"][data-glass="none"] .p-hl, [data-bar="light"][data-glass="none"] .p-hl i, [data-bar="light"][data-glass="none"] .p-muted { color: #2a2f3a; }
+[data-bar="light"][data-glass="none"] .d-tx span, [data-bar="light"][data-glass="none"] .d-h span { color: #4a5261; }
+[data-bar="light"][data-glass="none"] .p-sep { background: rgba(0, 0, 0, 0.28); box-shadow: none; }
+[data-bar="light"][data-glass="none"] .pill .wx svg, [data-bar="light"][data-glass="none"] .p-hint .gl, [data-bar="light"][data-glass="none"] .p-muted .gl { filter: drop-shadow(0 0.5px 0.5px rgba(0, 0, 0, 0.25)); }

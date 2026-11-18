@@ -49,6 +49,8 @@ struct Shared {
     /// window label -> intended size (physical px)
     sizes: Mutex<HashMap<String, (u32, u32)>>,
     tray_number: Mutex<Option<Vec<u8>>>,
+    /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
+    dock: Mutex<(u32, bool)>,
     pending_section: Mutex<Option<String>>,
     covered: Mutex<Covered>,
     quitting: AtomicBool,
@@ -529,11 +531,28 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
         let height = bar.bottom - bar.top;
         let horizontal = bar.right - bar.left > height * 3;
         if horizontal && height >= 30 {
+            let scale = window(app, "pill").and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
+            let mut dock = (0u32, win32::taskbar_is_light());
+            let mut spot = None;
             if docked(app) {
-                // Docked: the empty stretch at the left end of a centered taskbar.
+                // Docked: the empty stretch left of the Start button on a centered taskbar.
                 let margin = (height as f64 * 0.25) as i32;
-                return (bar.left + margin, bar.top, height);
+                if let Some((left, right)) = win32::taskbar_free_left() {
+                    let room = ((right - left - 2 * margin) as f64 / scale) as i32;
+                    if room >= 150 {
+                        dock.0 = room.min(720) as u32;
+                        spot = Some((left + margin, bar.top, height));
+                    }
+                }
             }
+            let changed = std::mem::replace(&mut *shared(app).dock.lock().unwrap(), dock) != dock;
+            if changed {
+                let _ = app.emit("sky:dock", dock_info(app));
+            }
+            if let Some(spot) = spot {
+                return spot;
+            }
+            // Otherwise (no free stretch, for example left-aligned icons) it sits by the tray.
             let right = tray.map(|t| t.left).filter(|&l| l > (bar.left + bar.right) / 2).unwrap_or(bar.right - 340) - 8;
             return (right - width, bar.top, height);
         }
@@ -551,7 +570,7 @@ fn place_pill(app: &AppHandle) {
     let (x, y, height) = pill_geometry(app, width);
     st.sizes.lock().unwrap().insert("pill".into(), (width as u32, height as u32));
     // The dock has one fixed home; only the floating pill remembers where it was dragged.
-    let (x, y) = if docked(app) { (x, y) } else { saved_point(&setting(app, "pillPos")).unwrap_or((x, y)) };
+    let (x, y) = if shared(app).dock.lock().unwrap().0 > 0 { (x, y) } else { saved_point(&setting(app, "pillPos")).unwrap_or((x, y)) };
     let _ = w.set_size(PhysicalSize::new(width as u32, height as u32));
     let _ = w.set_position(PhysicalPosition::new(x, y));
 }
@@ -1062,7 +1081,8 @@ fn set_content_size(app: AppHandle, window: WebviewWindow, width: f64, height: f
             let _ = window.set_size(PhysicalSize::new(next.0, next.1));
         }
         "pill" => {
-            let width = px(width, 80.0, if docked(&app) { 720.0 } else { 360.0 });
+            let room = st.dock.lock().unwrap().0;
+            let width = px(width, 80.0, if room > 0 { room as f64 } else { 360.0 });
             let previous = st.sizes.lock().unwrap().get("pill").copied().unwrap_or((0, (48.0 * scale) as u32));
             if previous.0 == width {
                 return;
@@ -1099,6 +1119,16 @@ fn show_context_menu(app: AppHandle, window: WebviewWindow) {
     }
 }
 
+fn dock_info(app: &AppHandle) -> Value {
+    let (room, light) = *shared(app).dock.lock().unwrap();
+    json!({ "room": room, "light": light })
+}
+
+#[tauri::command]
+fn get_dock(app: AppHandle) -> Value {
+    dock_info(&app)
+}
+
 #[tauri::command]
 fn get_update_state(app: AppHandle) -> Value {
     app.state::<Updater>().public(&app)
@@ -1132,7 +1162,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state, get_settings, set_settings, get_locations, lookup_zip, add_location, remove_location,
             set_active_location, complete_setup, refresh_now, open_detail_cmd, take_pending_section, window_control,
-            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_update_state,
+            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_update_state,
             check_for_updates, install_update, quit_cmd
         ])
         .setup(|app| {
@@ -1156,6 +1186,7 @@ fn main() {
                 drags: Mutex::new(HashMap::new()),
                 sizes: Mutex::new(HashMap::new()),
                 tray_number: Mutex::new(None),
+                dock: Mutex::new((0, false)),
                 pending_section: Mutex::new(None),
                 covered: Mutex::new(Covered::default()),
                 quitting: AtomicBool::new(false),

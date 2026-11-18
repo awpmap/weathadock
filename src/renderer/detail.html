@@ -77,10 +77,35 @@
               <button role="radio" data-val="taskbar">On the taskbar</button>
             </div>
           </div>
+          <div class="set-row" data-taskbar-only>
+            <span class="set-ic" data-gl="cloud"></span>
+            <div class="set-tx"><div class="set-name">Conditions</div><div class="set-sub">The weather in words, such as “Partly Cloudy”.</div></div>
+            <button class="switch" role="switch" data-tb="condition" aria-label="Show conditions on the taskbar"></button>
+          </div>
+          <div class="set-row" data-taskbar-only>
+            <span class="set-ic" data-gl="layers"></span>
+            <div class="set-tx"><div class="set-name">High and low</div><div class="set-sub">Today’s high and low temperatures.</div></div>
+            <button class="switch" role="switch" data-tb="highLow" aria-label="Show high and low on the taskbar"></button>
+          </div>
+          <div class="set-row" data-taskbar-only>
+            <span class="set-ic" data-gl="bell"></span>
+            <div class="set-tx"><div class="set-name">Rain and snow timing</div><div class="set-sub">When precipitation starts or stops. Alerts always show.</div></div>
+            <button class="switch" role="switch" data-tb="hint" aria-label="Show rain and snow timing on the taskbar"></button>
+          </div>
+          <div class="set-row" data-taskbar-only>
+            <span class="set-ic" data-gl="clock"></span>
+            <div class="set-tx"><div class="set-name">Hours ahead</div><div class="set-sub">Upcoming hours, as many as fit beside your taskbar icons.</div></div>
+            <div class="seg" role="radiogroup" aria-label="Hours ahead" data-tb-hours>
+              <button role="radio" data-val="0">Off</button>
+              <button role="radio" data-val="2">2</button>
+              <button role="radio" data-val="4">4</button>
+              <button role="radio" data-val="6">6</button>
+            </div>
+          </div>
         </div>
 
-        <h2 class="group-title">Desktop widget</h2>
-        <div class="card set">
+        <h2 class="group-title" data-desktop-only>Desktop widget</h2>
+        <div class="card set" data-desktop-only>
           <div class="set-row">
             <span class="set-ic" data-gl="brush"></span>
             <div class="set-tx"><div class="set-name">Customize widget</div><div class="set-sub" id="cz-summary">Choose a style, what to show and how it is arranged.</div></div>
@@ -101,8 +126,8 @@
           </div>
         </div>
 
-        <h2 class="group-title">Widget behavior</h2>
-        <div class="card set set-compact">
+        <h2 class="group-title" data-desktop-only>Widget behavior</h2>
+        <div class="card set set-compact" data-desktop-only>
           <div class="set-row">
             <span class="set-ic" data-gl="lock"></span>
             <div class="set-tx"><div class="set-name">Lock position</div><div class="set-sub">The widget can’t be dragged.</div></div>

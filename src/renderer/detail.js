@@ -573,6 +573,10 @@
       ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
       : 'A widget on your desktop.';
     document.querySelectorAll('[data-desktop-only]').forEach(function (r) { r.hidden = docked; });
+    document.querySelectorAll('[data-taskbar-only]').forEach(function (r) { r.hidden = !docked; });
+    var tb = s.taskbar || {};
+    document.querySelectorAll('[data-tb]').forEach(function (b) { b.setAttribute('aria-checked', tb[b.dataset.tb] !== false ? 'true' : 'false'); });
+    document.querySelectorAll('[data-tb-hours] button').forEach(function (b) { var on = String(tb.hours == null ? 4 : tb.hours) === b.dataset.val; b.setAttribute('aria-checked', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; });
     $('covered-sub').textContent = s.coveredMode === 'taskbar'
       ? 'A small weather pill appears on the taskbar.'
       : 'The tray icon shows the current temperature.';
@@ -583,6 +587,10 @@
     Promise.resolve(window.sky.setSettings(p)).then(function (s) { if (s) { settings = s; applySettings(); } }).catch(function () {});
   }
   document.querySelectorAll('[data-set]').forEach(function (b) { b.addEventListener('click', function () { var o = {}; o[b.dataset.set] = b.getAttribute('aria-checked') !== 'true'; patch(o); }); });
+  /* taskbar strip options live in one nested object */
+  function patchBar(k, v) { var tb = Object.assign({}, settings && settings.taskbar); tb[k] = v; patch({ taskbar: tb }); }
+  document.querySelectorAll('[data-tb]').forEach(function (b) { b.addEventListener('click', function () { patchBar(b.dataset.tb, b.getAttribute('aria-checked') !== 'true'); }); });
+  document.querySelector('[data-tb-hours]').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) patchBar('hours', Number(b.dataset.val)); });
   document.querySelectorAll('[data-seg]').forEach(function (g) {
     g.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b) return;

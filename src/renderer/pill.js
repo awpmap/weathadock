@@ -3,7 +3,7 @@
   'use strict';
   var U = window.SkyUI, I = window.SkyIcons, esc = U.esc;
   var root = document.getElementById('root');
-  var state = null, last = '', dock = false, wantDock = false, room = 0;
+  var state = null, last = '', dock = false, wantDock = false, room = 0, opt = { condition: true, highLow: true, hint: true, hours: 4 };
 
   function shortEvent(ev) {
     /* "Severe Thunderstorm Warning" -> "Severe T-Storm Warning"; keep the official wording otherwise */
@@ -23,11 +23,14 @@
       html = I.wx(c.icon, c.isDay) + '<span class="p-temp">' + U.deg(c.temp) + '</span>';
       if (dock) {
         /* docked on the taskbar: room for the conditions in words and the next few hours */
-        html += '<span class="d-tx"><b>' + esc(c.condition || '') + '</b>' +
-          (t.high != null || t.low != null ? '<span>H ' + U.deg(t.high) + ' \u00b7 L ' + U.deg(t.low) + '</span>' : '') + '</span>';
+        var top = opt.condition ? esc(c.condition || '') : '';
+        var hl = opt.highLow && (t.high != null || t.low != null) ? 'H ' + U.deg(t.high) + ' \u00b7 L ' + U.deg(t.low) : '';
+        /* one line when only one of the two is on, so nothing floats off the center line */
+        if (top && hl) html += '<span class="d-tx"><b>' + top + '</b><span>' + hl + '</span></span>';
+        else if (top || hl) html += '<span class="d-tx"><b>' + (top || hl) + '</b></span>';
       } else if (t.high != null || t.low != null) html += '<span class="p-hl" title="High / low"><b>' + U.deg(t.high) + '</b><i>/</i><span>' + U.deg(t.low) + '</span></span>';
       var a = s.alerts && s.alerts[0];
-      var hint = U.shortHint(s.nextPrecip, tz);
+      var hint = dock && !opt.hint ? '' : U.shortHint(s.nextPrecip, tz);
       if (a) {
         cls += ' has-alert sev-' + U.sev(a);
         html += '<span class="p-alert" data-open="alerts" title="' + esc(a.event) + '"><i class="p-alert-ic">' + I.gl('alert') + '</i><span>' + esc(shortEvent(a.event)) + '</span></span>';
@@ -35,9 +38,9 @@
         html += '<i class="p-sep"></i><span class="p-hint k-' + s.nextPrecip.kind + '">' + I.gl(U.kindGlyph(s.nextPrecip.kind)) + '<span>' + esc(hint) + '</span></span>';
       }
       if (dock) {
-        var hs = (s.hourly || []).slice(1, 5);
+        var hs = (s.hourly || []).slice(1, 1 + opt.hours);
         if (hs.length) html += '<i class="p-sep"></i><span class="d-hours" data-open="hourly">' + hs.map(function (h) {
-          return '<span class="d-h"><span>' + esc(U.hour(h.time, tz)) + '</span><b>' + I.wx(h.icon, h.isDay) + U.deg(h.temp) + '</b></span>';
+          return '<span class="d-h">' + I.wx(h.icon, h.isDay) + '<span class="d-tx"><b>' + U.deg(h.temp) + '</b><span>' + esc(U.hour(h.time, tz)) + '</span></span></span>';
         }).join('') + '</span>';
       }
     }
@@ -51,7 +54,7 @@
   function fit() {
     root.removeAttribute('data-fit');
     if (!dock) return;
-    for (var level = 1; level <= 4 && root.scrollWidth > room; level++) root.setAttribute('data-fit', level);
+    for (var level = 1; level <= 5 && root.scrollWidth > room; level++) root.setAttribute('data-fit', level);
   }
 
   function reportSize() {
@@ -72,7 +75,7 @@
       document.documentElement.dataset.glass = dock ? 'none' : glass;
       last = ''; render();
     }
-    function place(st) { wantDock = !!st && st.placement === 'taskbar'; apply(); }
+    function place(st) { wantDock = !!st && st.placement === 'taskbar'; if (st && st.taskbar) opt = st.taskbar; apply(); }
     function bar(d) {
       room = (d && d.room) || 0;
       document.documentElement.dataset.bar = d && d.light ? 'light' : 'dark';

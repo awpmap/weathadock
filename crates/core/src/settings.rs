@@ -3,9 +3,9 @@
 
 use serde_json::{json, Map, Value};
 
-const PUBLIC_KEYS: [&str; 15] = [
+const PUBLIC_KEYS: [&str; 16] = [
     "glass", "layout", "widget", "widgetSet", "lockPosition", "snapToEdges", "widgetOnTop", "widgetOpacity",
-    "coveredMode", "placement", "showWidget", "launchAtLogin", "alertNotifications", "refreshMinutes", "zip",
+    "coveredMode", "placement", "taskbar", "showWidget", "launchAtLogin", "alertNotifications", "refreshMinutes", "zip",
 ];
 const SHOW_KEYS: [&str; 17] = [
     "location", "updated", "refresh", "icon", "temp", "condition", "highLow", "feelsLike", "incoming", "timeline",
@@ -33,6 +33,7 @@ pub fn defaults() -> Value {
         "widget": widget_defaults(),
         "widgetSet": false,         // false until a widget config has been chosen (lets v1 layouts migrate)
         "placement": "desktop",     // where the weather lives: desktop widget | docked on the taskbar
+        "taskbar": taskbar_defaults(), // what the docked taskbar strip shows
         "coveredMode": "tray",      // while apps cover the widget: tray temperature | taskbar pill
         "showWidget": true, "lockPosition": false, "snapToEdges": true, "widgetOnTop": false, "widgetOpacity": 100,
         "launchAtLogin": true, "alertNotifications": true, "refreshMinutes": 10,
@@ -70,6 +71,24 @@ pub fn sanitize_widget(input: &Value, base: &Value) -> Value {
     out
 }
 
+/// What the docked taskbar strip shows.
+pub fn taskbar_defaults() -> Value {
+    json!({ "condition": true, "highLow": true, "hint": true, "hours": 4 })
+}
+
+/// Merge a (possibly partial or hand-edited) taskbar strip config over `current`.
+pub fn sanitize_taskbar(input: &Value, current: &Value) -> Value {
+    let fallback = taskbar_defaults();
+    let mut out = Map::new();
+    for key in ["condition", "highLow", "hint"] {
+        let v = input[key].as_bool().or(current[key].as_bool()).or(fallback[key].as_bool()).unwrap_or(true);
+        out.insert(key.to_string(), json!(v));
+    }
+    let hours = [&input["hours"], &current["hours"]].into_iter().find_map(|v| v.as_i64().filter(|n| [0, 2, 4, 6].contains(n))).unwrap_or(4);
+    out.insert("hours".into(), json!(hours));
+    Value::Object(out)
+}
+
 /// Keep only the valid parts of a settings change sent by a window.
 pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
     let mut out = Map::new();
@@ -94,6 +113,9 @@ pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
         if !s.is_empty() && s.len() <= 24 && s.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
             out.insert("layout".into(), json!(s));
         }
+    }
+    if patch["taskbar"].is_object() {
+        out.insert("taskbar".into(), sanitize_taskbar(&patch["taskbar"], &current["taskbar"]));
     }
     if patch["widget"].is_object() {
         out.insert("widget".into(), sanitize_widget(&patch["widget"], &current["widget"]));
@@ -128,6 +150,7 @@ pub fn load(stored: Option<Value>) -> Value {
         o.remove("lastSeenVersion");
     }
     data["widget"] = sanitize_widget(&data["widget"].clone(), &widget_defaults());
+    data["taskbar"] = sanitize_taskbar(&data["taskbar"].clone(), &taskbar_defaults());
     if !had_widget {
         data["widgetSet"] = json!(false);
     }
@@ -210,5 +233,13 @@ mod tests {
         assert_eq!(p["widget"]["show"]["temp"], true);
         assert_eq!(p["widgetSet"], true);
         assert_eq!(p["layout"], "custom");
+    }
+
+    #[test]
+    fn taskbar_strip_config_is_merged_and_validated() {
+        let d = load(Some(json!({ "taskbar": { "hours": 9, "hint": false } })));
+        assert_eq!(d["taskbar"], json!({ "condition": true, "highLow": true, "hint": false, "hours": 4 }));
+        let p = sanitize_patch(&json!({ "taskbar": { "hours": 6 } }), &d);
+        assert_eq!(p["taskbar"], json!({ "condition": true, "highLow": true, "hint": false, "hours": 6 }));
     }
 }

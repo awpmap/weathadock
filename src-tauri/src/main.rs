@@ -540,7 +540,7 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
                 if let Some((left, right)) = win32::taskbar_free_left() {
                     let room = ((right - left - 2 * margin) as f64 / scale) as i32;
                     if room >= 150 {
-                        dock.0 = room.min(720) as u32;
+                        dock.0 = room.min(900) as u32;
                         spot = Some((left + margin, bar.top, height));
                     }
                 }

@@ -322,4 +322,5 @@ sky.showContextMenu(): void         // widget + pill: call on right-click (conte
 `Settings.placement = 'taskbar'` replaces the desktop widget with the pill window docked in the free
 space left of the Start button. `sky.getDock()` / `sky.onDock(cb)` give `{ room, light }`: the logical
 pixels available (0 when the taskbar has no free stretch, in which case the pill keeps its place by
-the tray) and whether the taskbar is light. The pill drops hours, then the hint, then the words to fit.
+the tray) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
+chooses what the strip shows; patch it as a whole object. The pill drops hours, then the hint, then the words to fit.

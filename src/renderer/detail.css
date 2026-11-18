@@ -321,3 +321,4 @@ button.card:hover, .card.is-link:hover { background: var(--fill-2); }
 
 .set-compact .set-row { min-height: 52px; padding-top: 7px; padding-bottom: 7px; }
 .set-row[hidden] { display: none; }
+[data-desktop-only][hidden], [data-taskbar-only][hidden] { display: none; }

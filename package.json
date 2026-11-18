@@ -1,8 +1,8 @@
 {
   "name": "weathadock",
   "productName": "WeathaDock",
-  "version": "1.0.0",
-  "description": "A fully transparent desktop weather widget for Windows with tray and taskbar presence.",
+  "version": "1.0.1",
+  "description": "WeathaDock",
   "main": "src/main/main.js",
   "author": "WeathaDock",
   "license": "MIT",
@@ -68,7 +68,7 @@
         "releaseType": "release"
       }
     ],
-    "copyright": "WeathaDock"
+    "copyright": "Copyright © 2026 WeathaDock"
   },
   "repository": {
     "type": "git",

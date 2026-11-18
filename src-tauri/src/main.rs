@@ -28,6 +28,10 @@ const APP_NAME: &str = "WeathaDock";
 const COVERED_AT: f64 = 0.35; // the widget counts as covered when this share of it is hidden
 const TICK: Duration = Duration::from_millis(500);
 const BRIDGE: &str = include_str!("bridge.js");
+/// WebView2 switches, identical for every window (they share one browser process). The first
+/// group is Tauri's own default; the rest trims processes and background work a widget does not need.
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,msEdgeTranslate,OptimizationHints,Translate,MediaRouter \
+--in-process-gpu --disable-extensions --disable-component-update --disable-background-networking --no-pings --disable-sync --disable-breakpad";
 const TRAY_PLAIN: &[u8] = include_bytes!("../../build/tray.png");
 const SECTIONS: [&str; 5] = ["overview", "hourly", "daily", "alerts", "settings"];
 
@@ -451,7 +455,8 @@ fn create_widget_now(app: &AppHandle) {
         .focused(false)
         .visible(false)
         .always_on_top(flag(app, "widgetOnTop"))
-        .initialization_script(BRIDGE);
+        .initialization_script(BRIDGE)
+        .additional_browser_args(BROWSER_ARGS);
     if frosted {
         builder = builder.effects(tauri::window::EffectsBuilder::new().effect(tauri::window::Effect::Acrylic).build());
     }
@@ -548,6 +553,7 @@ fn sync_pill_now(app: &AppHandle) {
                 .visible(false)
                 .always_on_top(true)
                 .initialization_script(BRIDGE)
+        .additional_browser_args(BROWSER_ARGS)
                 .build();
             if let Ok(_w) = built {
                 #[cfg(windows)]
@@ -609,7 +615,8 @@ fn open_detail_now(app: &AppHandle, section: &str) {
         .min_inner_size(780.0, 560.0)
         .decorations(false)
         .background_color(tauri::window::Color(18, 23, 34, 255))
-        .initialization_script(BRIDGE);
+        .initialization_script(BRIDGE)
+        .additional_browser_args(BROWSER_ARGS);
     let saved = setting(app, "detailBounds");
     let size = saved["width"].as_u64().zip(saved["height"].as_u64()).filter(|&(w, h)| w >= 600 && h >= 400);
     if size.is_none() {
@@ -663,6 +670,7 @@ fn open_setup_now(app: &AppHandle) {
         .background_color(tauri::window::Color(18, 23, 34, 255))
         .center()
         .initialization_script(BRIDGE)
+        .additional_browser_args(BROWSER_ARGS)
         .build();
 }
 

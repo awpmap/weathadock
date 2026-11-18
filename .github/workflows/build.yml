@@ -42,7 +42,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path $cfg | Out-Null
           '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
           $app = Start-Process -FilePath target/release/weathadock.exe -PassThru
-          Start-Sleep -Seconds 30
+          Start-Sleep -Seconds 25
+          # Clear the desktop the way Win+D does, so the widget itself is in view.
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          Start-Sleep -Seconds 5
           New-Item -ItemType Directory -Force -Path smoke | Out-Null
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -65,6 +68,18 @@ jobs:
           $report += "settings: " + (Get-Content (Join-Path $cfg 'settings.json') -Raw).Length + " bytes; cache exists: " + (Test-Path (Join-Path $cfg 'forecast-cache.json'))
           $report += "exe size: {0:N1} MB" -f ((Get-Item target/release/weathadock.exe).Length/1MB)
           $report | Tee-Object smoke/report.txt
+          # Starting it a second time asks the running copy to open its main window.
+          Start-Process -FilePath target/release/weathadock.exe
+          Start-Sleep -Seconds 8
+          $bmp2 = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp2).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $small2 = New-Object System.Drawing.Bitmap $bmp2, ([int]($b.Width * 0.75)), ([int]($b.Height * 0.75))
+          $small2.Save("smoke/window.jpg", $jpeg, $q)
+          Write-Output "SCREENSHOT2-BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/window.jpg")) -split '(.{4000})' | Where-Object { $_ }
+          Write-Output "SCREENSHOT2-END"
+          $procs = Get-Process | Where-Object { $_.ProcessName -match 'weathadock|msedgewebview2' }
+          "WITH-WINDOW TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
           if ($app.HasExited) { Write-Error "WeathaDock exited early with code $($app.ExitCode)"; exit 1 }
           Stop-Process -Id $app.Id -Force
       - uses: actions/upload-artifact@v4

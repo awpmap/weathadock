@@ -21,7 +21,13 @@
     "longDescription": "WeathaDock",
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
-      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "sidebarImage": "installer/sidebar.bmp",
+        "headerImage": "installer/header.bmp",
+        "installerHooks": "installer/hooks.nsh"
+      }
     }
   }
 }

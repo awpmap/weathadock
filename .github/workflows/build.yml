@@ -84,6 +84,33 @@ jobs:
           "WITH-WINDOW TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
           if ($app.HasExited) { Write-Error "WeathaDock exited early with code $($app.ExitCode)"; exit 1 }
           Stop-Process -Id $app.Id -Force
+      # Walk through the setup wizard and record each page.
+      - name: Installer screenshots
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          (New-Object -ComObject Shell.Application).MinimizeAll()
+          $setup = Start-Process -FilePath "${{ steps.installer.outputs.file }}" -PassThru
+          $ws = New-Object -ComObject WScript.Shell
+          $jpeg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+          $q = New-Object System.Drawing.Imaging.EncoderParameters 1
+          $q.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), 82L
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          foreach ($page in 1..4) {
+            Start-Sleep -Seconds $(if ($page -eq 3) { 25 } else { 6 })
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("smoke/installer$page.jpg", $jpeg, $q)
+            Write-Output "INSTALLER$page-BEGIN"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/installer$page.jpg")) -split '(.{4000})' | Where-Object { $_ }
+            Write-Output "INSTALLER$page-END"
+            $null = $ws.AppActivate($setup.Id)
+            Start-Sleep -Milliseconds 500
+            if ($page -lt 4) { $ws.SendKeys('{ENTER}') }
+          }
+          Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue
+          Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
       - uses: actions/upload-artifact@v4
         if: always()
         with:

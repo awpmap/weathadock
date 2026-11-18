@@ -301,9 +301,7 @@ function openDetail(section = 'overview') {
   }
   detail = new BrowserWindow({
     width: 1000, height: 700, minWidth: 780, minHeight: 560,
-    ...(HAS_ACRYLIC
-      ? { backgroundMaterial: 'acrylic', backgroundColor: '#00000000' }
-      : { backgroundColor: '#10141c' }),
+    backgroundColor: '#121722', // solid: app windows never show the desktop through them
     frame: false, show: false, title: APP_NAME, icon: ICON, webPreferences: webPreferences(),
   });
   load(detail, 'detail.html', { section });
@@ -319,7 +317,7 @@ function openSetup() {
   if (alive(setup)) { setup.show(); setup.focus(); return; }
   setup = new BrowserWindow({
     width: 520, height: 640, resizable: false, maximizable: false, fullscreenable: false,
-    transparent: true, backgroundColor: '#00000000', frame: false, show: false, center: true,
+    backgroundColor: '#121722', frame: false, show: false, center: true,
     title: `Welcome to ${APP_NAME}`, icon: ICON, webPreferences: webPreferences(),
   });
   load(setup, 'setup.html', { acrylic: HAS_ACRYLIC ? '1' : '0' });

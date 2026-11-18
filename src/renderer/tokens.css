@@ -18,7 +18,7 @@
   /* glass tints */
   --glass-clear: linear-gradient(180deg, rgba(24, 30, 43, 0.62) 0%, rgba(13, 17, 26, 0.74) 100%);
   --glass-frosted: linear-gradient(180deg, rgba(20, 26, 38, 0.42) 0%, rgba(12, 16, 24, 0.54) 100%);
-  --glass-detail: rgba(16, 20, 28, 0.62);
+  --glass-detail: linear-gradient(180deg, #1a2232 0%, #0f141d 100%); /* opaque: app windows never show the desktop */
   --glass-edge: rgba(255, 255, 255, 0.13);
 
   /* meaning */

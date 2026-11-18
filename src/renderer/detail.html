@@ -13,10 +13,13 @@
 <div class="app">
   <header class="tb">
     <div class="tb-brand"><span class="tb-logo" id="tb-logo"></span><span>Skylight</span></div>
+    <div class="tb-right">
+    <button class="tb-update" id="tb-update" hidden><span data-gl="download"></span>Update ready</button>
     <div class="winctl">
       <button data-win="minimize" aria-label="Minimize"></button>
       <button data-win="maximize" aria-label="Maximize"></button>
       <button data-win="close" aria-label="Close"></button>
+    </div>
     </div>
   </header>
   <div class="shell">
@@ -33,8 +36,11 @@
     </nav>
     <main class="main" id="main">
       <div class="head">
-        <div class="head-loc" id="head-loc"></div>
-        <div class="head-upd"><span id="head-upd"></span><button class="icon-btn" id="btn-refresh" aria-label="Refresh now" title="Refresh now"></button></div>
+        <div class="head-place">
+          <button class="head-loc" id="head-loc" aria-haspopup="menu" aria-expanded="false" title="Switch location"></button>
+          <div class="menu" id="loc-menu" role="menu" hidden></div>
+        </div>
+        <div class="head-upd"><span id="head-upd"></span><button class="btn" id="btn-refresh" title="Fetch the latest weather now"><span data-gl="refresh"></span><span id="btn-refresh-tx">Refresh</span></button></div>
       </div>
       <div class="notice" id="notice" hidden></div>
       <section class="page" id="sec-overview" role="tabpanel" hidden></section>
@@ -44,48 +50,79 @@
       <section class="page" id="sec-settings" role="tabpanel" hidden>
         <h1 class="page-title">Settings</h1>
 
-        <h2 class="group-title">Location</h2>
-        <div class="card set">
-          <div class="set-row">
-            <span class="set-ic" data-gl="pin"></span>
-            <div class="set-tx"><label class="set-name" for="zip">ZIP code</label><div class="set-sub">US locations only. Forecasts and alerts follow this ZIP.</div></div>
+        <h2 class="group-title">Locations</h2>
+        <div class="card set" id="loc-card">
+          <div id="loc-list" role="radiogroup" aria-label="Saved locations"></div>
+          <form class="set-row loc-add" id="loc-form" novalidate>
+            <span class="set-ic" data-gl="plus"></span>
+            <div class="set-tx"><label class="set-name" for="zip">Add a location</label><div class="set-sub"><span class="inline-status" id="zip-status" aria-live="polite">US ZIP code. The new place becomes the active one.</span></div></div>
             <div class="zip-ctl">
-              <input class="field zip-in" id="zip" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="00000" aria-describedby="zip-status">
-              <button class="btn is-primary" id="zip-save" hidden>Use this location</button>
+              <input class="field zip-in" id="zip" inputmode="numeric" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ZIP" aria-describedby="zip-status">
+              <button class="btn is-primary" id="zip-add" type="submit" disabled>Add</button>
             </div>
-          </div>
-          <div class="set-row set-row-sub"><span class="inline-status" id="zip-status" aria-live="polite"></span></div>
+          </form>
         </div>
 
-        <h2 class="group-title">Appearance</h2>
+        <h2 class="group-title">Desktop widget</h2>
         <div class="card set">
           <div class="set-block">
-            <div class="set-name">Glass style</div>
-            <div class="set-sub">How the desktop widget lets your wallpaper through.</div>
-            <div class="looks" role="radiogroup" aria-label="Glass style" id="looks">
+            <div class="set-name">Style</div>
+            <div class="set-sub">What sits behind the weather on your desktop. This window always stays solid.</div>
+            <div class="looks looks-3" role="radiogroup" aria-label="Widget style" id="looks">
+              <button class="look" role="radio" data-glass="none">
+                <span class="look-prev"><span class="look-mini is-none"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
+                <span class="look-name"><i class="look-radio"></i>Transparent</span>
+                <span class="look-desc">Nothing behind it. Floats on your wallpaper.</span>
+              </button>
               <button class="look" role="radio" data-glass="clear">
                 <span class="look-prev"><span class="look-mini is-clear"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
-                <span class="look-name"><i class="look-radio"></i>Clear</span>
-                <span class="look-desc">See-through tinted glass. Your wallpaper stays sharp behind it.</span>
+                <span class="look-name"><i class="look-radio"></i>Tinted glass</span>
+                <span class="look-desc">A see-through dark panel for extra contrast.</span>
               </button>
               <button class="look" role="radio" data-glass="frosted">
                 <span class="look-prev"><span class="look-mini is-frosted"><b>72°</b><span data-wx="partly-cloudy"></span></span></span>
                 <span class="look-name"><i class="look-radio"></i>Frosted</span>
-                <span class="look-desc">Blurred acrylic, like Windows 11 panels. Calmer over busy wallpapers.</span>
+                <span class="look-desc">Blurred acrylic, like Windows 11 panels.</span>
+              </button>
+            </div>
+          </div>
+          <div class="set-block">
+            <div class="set-name">Layout</div>
+            <div class="set-sub">How much the widget shows. Changes apply right away.</div>
+            <div class="looks looks-4" role="radiogroup" aria-label="Widget layout" id="lays">
+              <button class="look lay" role="radio" data-layout="full">
+                <span class="lay-prev"><svg viewBox="0 0 96 60" aria-hidden="true"><rect x="34" y="5" width="11" height="9" rx="2" fill="#fff" opacity="1"/><circle cx="58" cy="9.5" r="4" fill="#ffcb52" opacity="1"/><rect x="34" y="17" width="28" height="2" rx="1" fill="#fff" opacity="0.6"/><rect x="34" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="39" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="44" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="49" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="54" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="59" y="23" width="3" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="34" y="33" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="34" y="38" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="34" y="43" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="34" y="48" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="34" y="53" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/></svg></span>
+                <span class="look-name"><i class="look-radio"></i>Full</span>
+                <span class="look-desc">Now, incoming, hours and days.</span>
+              </button>
+              <button class="look lay" role="radio" data-layout="compact">
+                <span class="lay-prev"><svg viewBox="0 0 96 60" aria-hidden="true"><rect x="34" y="12" width="13" height="11" rx="2" fill="#fff" opacity="1"/><circle cx="58" cy="17.5" r="5" fill="#ffcb52" opacity="1"/><rect x="34" y="27" width="22" height="2.4" rx="1.2" fill="#fff" opacity="0.75"/><rect x="34" y="33" width="28" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="34" y="41" width="24" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/></svg></span>
+                <span class="look-name"><i class="look-radio"></i>Compact</span>
+                <span class="look-desc">Now, high/low and what’s coming.</span>
+              </button>
+              <button class="look lay" role="radio" data-layout="wide">
+                <span class="lay-prev"><svg viewBox="0 0 96 60" aria-hidden="true"><rect x="8" y="19" width="12" height="10" rx="2" fill="#fff" opacity="1"/><circle cx="27" cy="24" r="4.5" fill="#ffcb52" opacity="1"/><rect x="8" y="33" width="22" height="2.4" rx="1.2" fill="#fff" opacity="0.7"/><rect x="8" y="38.5" width="16" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="40.0" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="40.0" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="44.6" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="44.6" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="49.2" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="49.2" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="53.8" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="53.8" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="58.4" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="58.4" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="63.0" y="22" width="3" height="7" rx="1" fill="#fff" opacity="0.55"/><rect x="63.0" y="32" width="3" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="72" y="19" width="17" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="72" y="24" width="17" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="72" y="29" width="17" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="72" y="34" width="17" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/><rect x="72" y="39" width="17" height="2.4" rx="1.2" fill="#fff" opacity="0.5"/></svg></span>
+                <span class="look-name"><i class="look-radio"></i>Wide</span>
+                <span class="look-desc">A horizontal strip with hours and days.</span>
+              </button>
+              <button class="look lay" role="radio" data-layout="minimal">
+                <span class="lay-prev"><svg viewBox="0 0 96 60" aria-hidden="true"><circle cx="33" cy="30" r="6" fill="#ffcb52" opacity="1"/><rect x="43" y="23" width="15" height="13" rx="2.5" fill="#fff" opacity="1"/><rect x="62" y="25" width="8" height="2.6" rx="1.3" fill="#fff" opacity="0.7"/><rect x="62" y="32" width="8" height="2.6" rx="1.3" fill="#fff" opacity="0.7"/></svg></span>
+                <span class="look-name"><i class="look-radio"></i>Minimal</span>
+                <span class="look-desc">Icon, temperature, high/low.</span>
               </button>
             </div>
           </div>
           <div class="set-row">
             <span class="set-ic" data-gl="layers"></span>
-            <div class="set-tx"><div class="set-name">Show desktop widget</div><div class="set-sub">Keep the weather panel on your desktop.</div></div>
+            <div class="set-tx"><div class="set-name">Show desktop widget</div><div class="set-sub">Keep the weather on your desktop.</div></div>
             <button class="switch" role="switch" data-set="showWidget" aria-label="Show desktop widget"></button>
           </div>
           <div class="set-row">
             <span class="set-ic" data-gl="cloud"></span>
             <div class="set-tx"><div class="set-name">When apps cover the widget</div><div class="set-sub" id="covered-sub"></div></div>
             <div class="seg" role="radiogroup" aria-label="When apps cover the widget" data-seg="coveredMode">
-              <button role="radio" data-val="taskbar">Taskbar + tray</button>
-              <button role="radio" data-val="tray">Tray only</button>
+              <button role="radio" data-val="tray">Tray temperature</button>
+              <button role="radio" data-val="taskbar">Taskbar pill</button>
             </div>
           </div>
         </div>
@@ -94,7 +131,7 @@
         <div class="card set">
           <div class="set-row">
             <span class="set-ic" data-gl="bell"></span>
-            <div class="set-tx"><div class="set-name">Alert notifications</div><div class="set-sub">Notify me when the National Weather Service issues a new alert for my area.</div></div>
+            <div class="set-tx"><div class="set-name">Alert notifications</div><div class="set-sub">Notify me when the National Weather Service issues a new alert for the active location.</div></div>
             <button class="switch" role="switch" data-set="alertNotifications" aria-label="Alert notifications"></button>
           </div>
           <div class="set-row">
@@ -113,6 +150,19 @@
                 <button role="radio" data-val="30">30 min</button>
               </div>
               <button class="btn" id="set-refresh"><span data-gl="refresh"></span>Refresh now</button>
+            </div>
+          </div>
+        </div>
+
+        <h2 class="group-title" id="updates-title">Updates</h2>
+        <div class="card set" id="upd-card">
+          <div class="set-row">
+            <span class="set-ic" data-gl="download"></span>
+            <div class="set-tx"><div class="set-name" id="upd-name">Skylight</div><div class="set-sub" id="upd-sub" aria-live="polite"></div>
+              <div class="upd-bar" id="upd-bar" hidden><i id="upd-fill"></i></div></div>
+            <div class="set-ctl">
+              <button class="btn" id="upd-check"><span data-gl="refresh"></span><span id="upd-check-tx">Check for updates</span></button>
+              <button class="btn is-primary" id="upd-install" hidden><span data-gl="restart"></span>Restart to update</button>
             </div>
           </div>
         </div>

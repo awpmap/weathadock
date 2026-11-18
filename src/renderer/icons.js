@@ -143,6 +143,10 @@
     bell: '<path d="M5.2 13.500V9a4.8 4.8 0 0 1 9.6 0v4.500l1.2 1.500H4l1.2-1.500ZM8.4 17a1.7 1.7 0 0 0 3.2 0"/>',
     layers: '<path d="m10 3.2 7 3.8-7 3.800L3 7l7-3.800ZM3.4 10.4 10 14l6.6-3.600M3.4 13.4 10 17l6.6-3.6"/>',
     rocket: '<path d="M10 2.800c2.6 1.8 3.6 4.6 3.6 7.200l-1.4 3H7.800l-1.4-3c0-2.6 1-5.4 3.6-7.200Z"/><circle cx="10" cy="8" r="1.3"/><path d="M8.6 15.2 10 17.400l1.4-2.2"/>',
+    plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+    download: '<path d="M10 3.5v9M6.4 9.2 10 12.8l3.6-3.6M4 16h12"/>',
+    restart: '<path d="M4 10a6 6 0 1 0 1.9-4.4"/><path d="M3.8 3.4v3.4h3.4"/>',
+    trash: '<path d="M4.5 6h11M8 6V4.2h4V6M6 6l.7 9.6h6.6L14 6"/>',
     'win-min': '<path d="M5 10h10" stroke-width="1"/>',
     'win-max': '<rect x="5.5" y="5.5" width="9" height="9" rx="1.2" stroke-width="1"/>',
     'win-close': '<path d="m5.5 5.5 9 9M14.5 5.500l-9 9" stroke-width="1"/>'

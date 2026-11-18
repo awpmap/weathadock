@@ -1,7 +1,8 @@
 /* Design-time stand-in for the preload API. Loaded only when window.sky is undefined.
    ?scenario=clear-day|rain-soon|snow-night|severe-alert|loading|error
    Extras for design work: &stale=1 (mark data stale), &section=hourly (detail.html start section),
-   &setup=1 (no locations yet), &places=1 (single location; default is two), &layout=full|compact|wide|minimal. */
+   &setup=1 (no locations yet), &places=1 (single location; default is two), &layout=full|compact|wide|minimal,
+   &update=ready|downloading|unsupported|error|available (available: "Check for updates" finds and downloads one). */
 (function () {
   'use strict';
   if (window.sky) return;
@@ -312,7 +313,7 @@
     zip: activeZip,
     glass: gp === 'clear' || gp === 'frosted' ? gp : 'none',
     layout: LAYOUTS.indexOf(params.get('layout')) >= 0 ? params.get('layout') : 'full',
-    coveredMode: 'taskbar', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10
+    coveredMode: 'tray', showWidget: true, launchAtLogin: true, alertNotifications: true, refreshMinutes: 10
   };
 
   var state = buildFor(activeZip);
@@ -322,6 +323,17 @@
   function pushState() { var s = clone(state); stateCbs.forEach(function (cb) { cb(s); }); }
   function locs() { return { locations: clone(places), activeZip: activeZip }; }
   function pushLocs() { settings.zip = activeZip; var v = locs(); locCbs.forEach(function (cb) { cb(v); }); var st = clone(settings); settingsCbs.forEach(function (cb) { cb(st); }); }
+  var up = params.get('update');
+  var update = {
+    version: '1.0.0',
+    status: ['ready', 'downloading', 'unsupported', 'error'].indexOf(up) >= 0 ? up : 'idle',
+    newVersion: up === 'ready' || up === 'downloading' ? '1.1.0' : null,
+    percent: up === 'downloading' ? 42 : null,
+    error: up === 'error' ? 'Couldn\u2019t reach the update server. Check your connection and try again.' : null,
+    checkedAt: up === 'error' || up === 'ready' ? new Date(Date.now() - 5 * 60000).toISOString() : null
+  };
+  var updCbs = [];
+  function pushUpdate(patch) { Object.assign(update, patch); var u = clone(update); updCbs.forEach(function (cb) { cb(u); }); return u; }
   var switchSeq = 0;
   function activate(zip) {
     activeZip = zip; pushLocs();
@@ -346,6 +358,27 @@
       settingsCbs.forEach(function (cb) { cb(s); });
       return later(s, 40);
     },
+    getUpdateState: function () { return later(clone(update), 20); },
+    onUpdateState: function (cb) { updCbs.push(cb); },
+    checkForUpdates: function () {
+      log('checkForUpdates');
+      if (update.status === 'unsupported') return later(clone(update), 20);
+      pushUpdate({ status: 'checking', error: null });
+      return later(null, 900).then(function () {
+        var now = new Date().toISOString();
+        if (up !== 'available') return pushUpdate({ status: 'up-to-date', checkedAt: now, newVersion: null, percent: null });
+        pushUpdate({ status: 'downloading', newVersion: '1.1.0', percent: 0, checkedAt: now });
+        return new Promise(function (resolve) {
+          var pct = 0;
+          var t = setInterval(function () {
+            pct += 20;
+            if (pct >= 100) { clearInterval(t); resolve(pushUpdate({ status: 'ready', percent: 100 })); }
+            else pushUpdate({ percent: pct });
+          }, 250);
+        });
+      });
+    },
+    installUpdate: function () { log('installUpdate'); window.__installUpdate = true; },
     getLocations: function () { return later(locs(), 20); },
     onLocations: function (cb) { locCbs.push(cb); },
     addLocation: function (zip) {

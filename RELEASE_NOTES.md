@@ -1,6 +1,8 @@
-## WeathaDock 1.1.6
+## WeathaDock 1.1.7
 
-**Mouse battery.** WeathaDock can now show the charge of a Logitech wireless mouse, so you don't have to wait for the red light. Turn on "Mouse battery" in Settings. The percentage appears on the taskbar strip and when you hover the tray icon, turns red at 15%, and you get one notification when it runs low. It reads the level straight from the mouse's receiver, so Logitech G HUB does not need to be running. It is off by default.
+**Out of the way in full screen.** The taskbar strip and pill now disappear while a game, a full-screen video or a presentation has the screen, and come back when you leave it. A widget set to stay above other windows steps back too.
+
+**Fixed: things that were told to hide stayed on screen.** Switching the weather to the taskbar, or turning the desktop widget off, now removes the widget right away instead of after a restart, and the small taskbar pill goes away again when the widget is back in view.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

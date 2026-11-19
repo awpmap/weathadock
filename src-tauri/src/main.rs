@@ -1307,6 +1307,9 @@ fn main() {
             app.manage(Updater::default());
             store(&handle, |_| {}); // write migrated settings in the new location
             create_tray(&handle)?;
+            // Register (or clear) the start-with-Windows entry on every launch, so the default applies
+            // without the switch ever being touched and the entry follows the app if its folder changes.
+            apply_login_item(&handle);
             if loc.is_some() {
                 start_app(&handle);
             } else {

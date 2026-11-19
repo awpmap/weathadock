@@ -1,6 +1,6 @@
-## WeathaDock 1.1.9
+## WeathaDock 1.1.10
 
-**A steadier mouse battery.** The percentage no longer jumps around. It is taken from several readings in a row instead of a single one, so a momentary odd reading is ignored and a real change shows up within about a minute. The number also comes only from your mouse now: another Logitech device on the same PC, such as a keyboard or headset, can no longer be shown in its place.
+**Starts with Windows.** WeathaDock now opens quietly when you sign in, straight to the widget or taskbar strip with no window. The setting was already on, but the app never actually registered itself with Windows unless you flipped the switch. You can turn it off in Settings under "Start with Windows".
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

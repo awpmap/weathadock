@@ -166,6 +166,7 @@ jobs:
             Write-Output "INSTALLER$n-END"
           }
           "INSTALLED: " + (Test-Path (Join-Path $env:LOCALAPPDATA 'WeathaDock\weathadock.exe')) + "; running: " + [bool](Get-Process weathadock -ErrorAction SilentlyContinue) + "; desktop shortcut: " + (Test-Path (Join-Path ([Environment]::GetFolderPath('Desktop')) 'WeathaDock.lnk'))
+          "STARTUP ENTRY: " + (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).WeathaDock
           Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue
           Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
       - uses: actions/upload-artifact@v4

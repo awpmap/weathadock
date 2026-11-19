@@ -1,6 +1,6 @@
-## WeathaDock 1.1.8
+## WeathaDock 1.1.9
 
-**Mouse battery keeps up.** The mouse battery is now checked every 20 seconds instead of every five minutes, so "Charging" appears shortly after you plug the mouse in and the percentage stays current. It also recognizes a mouse that reports being on external power before it reports charging.
+**A steadier mouse battery.** The percentage no longer jumps around. It is taken from several readings in a row instead of a single one, so a momentary odd reading is ignored and a real change shows up within about a minute. The number also comes only from your mouse now: another Logitech device on the same PC, such as a keyboard or headset, can no longer be shown in its place.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

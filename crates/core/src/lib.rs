@@ -1,1 +1,1 @@
-pub mod weather; pub mod settings;
+pub mod weather; pub mod settings; pub mod battery;

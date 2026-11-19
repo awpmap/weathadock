@@ -26,6 +26,10 @@ use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 pub struct Battery {
     pub percent: u8,
     pub charging: bool,
+    /// Where the reading came from, for the trace log: HID++ feature, device index, raw reply.
+    pub feature: u16,
+    pub device: u8,
+    pub raw: [u8; 4],
 }
 
 const LONG_REPORT: u8 = 0x11;
@@ -188,20 +192,30 @@ impl Channel {
         (reply[0] != 0).then_some(reply[0])
     }
 
-    /// Battery of the device at `device`, and whether that device is a mouse or trackball.
-    fn battery(&self, device: u8) -> Option<(Battery, bool)> {
+    /// Battery of the device at `device`, and whether that device is a mouse or trackball
+    /// (`None` when the device did not say what it is).
+    fn battery(&self, device: u8) -> Option<(Battery, Option<bool>)> {
+        let raw = |r: &[u8; 16]| [r[0], r[1], r[2], r[3]];
         let battery = if let Some(index) = self.feature(device, FEATURE_UNIFIED_BATTERY) {
             // [state of charge %, level, charging status, external power]. Status 1 to 3 are
             // charging, slow charging and full on the charger; external power 1 means a cable
             // or charging pad is supplying power, which some mice report before the status changes.
             let r = self.request(device, index, 1, &[])?;
-            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=3) || r[3] == 1 }
+            // Mice that do not report a percentage send 0 with a coarse level instead (8 full, 4 good, 2 low, 1 critical).
+            let percent = match (r[0], r[1]) {
+                (0, level) if level & 8 != 0 => 90,
+                (0, level) if level & 4 != 0 => 50,
+                (0, level) if level & 2 != 0 => 20,
+                (0, level) if level & 1 != 0 => 5,
+                (percent, _) => percent.min(100),
+            };
+            Battery { percent, charging: matches!(r[2], 1..=3) || r[3] == 1, feature: FEATURE_UNIFIED_BATTERY, device, raw: raw(&r) }
         } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS) {
             let r = self.request(device, index, 0, &[])?; // [level %, next level %, status]
-            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=4) }
+            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
         } else if let Some(index) = self.feature(device, FEATURE_BATTERY_VOLTAGE) {
             let r = self.request(device, index, 0, &[])?; // [millivolts (2 bytes), flags]
-            Battery { percent: percent_from_millivolts(u16::from_be_bytes([r[0], r[1]])), charging: r[2] & 0x80 != 0 }
+            Battery { percent: percent_from_millivolts(u16::from_be_bytes([r[0], r[1]])), charging: r[2] & 0x80 != 0, feature: FEATURE_BATTERY_VOLTAGE, device, raw: raw(&r) }
         } else {
             return None;
         };
@@ -209,7 +223,7 @@ impl Channel {
         let pointer = self
             .feature(device, FEATURE_NAME_TYPE)
             .and_then(|index| self.request(device, index, 2, &[]))
-            .map_or(true, |r| matches!(r[0], 3 | 5));
+            .map(|r| matches!(r[0], 3 | 5));
         Some((battery, pointer))
     }
 }
@@ -233,22 +247,23 @@ fn percent_from_millivolts(mv: u16) -> u8 {
     0
 }
 
-/// Look for a Logitech wireless mouse and read its battery. A mouse wins over any other
-/// Logitech device with a battery. `None` when nothing answered (no such device, or asleep).
+/// Look for a Logitech wireless mouse and read its battery. Only a mouse counts: a Logitech
+/// keyboard or headset on the same PC is never shown in its place. A device that will not say
+/// what it is is used only when no mouse answered. `None` when nothing answered (asleep or absent).
 pub fn mouse_battery() -> Option<Battery> {
-    let mut other = None;
+    let mut unknown = None;
     for path in logitech_paths() {
         let Some(channel) = open(&path) else { continue };
         // 1: the device paired to a Lightspeed receiver; 0xFF: a mouse connected by cable; 2: a second paired device.
         for device in [0x01, 0xFF, 0x02] {
             match channel.battery(device) {
-                Some((battery, true)) => return Some(battery),
-                Some((battery, false)) => other = other.or(Some(battery)),
-                None => {}
+                Some((battery, Some(true))) => return Some(battery),
+                Some((battery, None)) => unknown = unknown.or(Some(battery)),
+                _ => {}
             }
         }
     }
-    other
+    unknown
 }
 
 #[cfg(test)]

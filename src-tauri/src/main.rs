@@ -54,6 +54,7 @@ struct Shared {
     /// Mouse battery: last reading as (percent, charging), when it was last tried, and whether the
     /// low-battery notice has been shown for this discharge.
     battery: Mutex<Option<(u8, bool)>>,
+    battery_smooth: Mutex<weathadock_core::battery::Smoother>,
     battery_tried: Mutex<i64>,
     battery_warned: AtomicBool,
     /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
@@ -275,12 +276,20 @@ fn check_battery(app: &AppHandle, now: bool) {
     let app = app.clone();
     std::thread::spawn(move || {
         #[cfg(windows)]
-        let reading = hidpp::mouse_battery().map(|b| (b.percent, b.charging));
+        let reading = hidpp::mouse_battery().map(|b| {
+            trace(format!("mouse battery raw feature={:04x} device={:02x} bytes={:02x?}", b.feature, b.device, b.raw));
+            (b.percent, b.charging)
+        });
         #[cfg(not(windows))]
         let reading: Option<(u8, bool)> = None;
-        trace(format!("mouse battery -> {reading:?}"));
         let st = shared(&app);
-        let Some((percent, charging)) = reading else { return };
+        let Some((raw_percent, charging)) = reading else {
+            trace("mouse battery -> None".to_string());
+            return;
+        };
+        // Single readings wander with what the mouse is doing; show the steadied value.
+        let percent = st.battery_smooth.lock().unwrap().push(raw_percent, charging);
+        trace(format!("mouse battery -> read {raw_percent}% shown {percent}% charging {charging}"));
         let changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
         if charging || percent > BATTERY_LOW + 5 {
             st.battery_warned.store(false, Ordering::Relaxed);
@@ -1287,6 +1296,7 @@ fn main() {
                 tray_number: Mutex::new(None),
                 dock: Mutex::new((0, false)),
                 battery: Mutex::new(None),
+                battery_smooth: Mutex::new(Default::default()),
                 battery_tried: Mutex::new(0),
                 battery_warned: AtomicBool::new(false),
                 pending_section: Mutex::new(None),

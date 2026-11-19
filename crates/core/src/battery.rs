@@ -67,6 +67,94 @@ impl Smoother {
     }
 }
 
+/// The charge as one of a few bands. The mouse's own percentage wanders by a few points, so the
+/// app shows the band instead of the number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Tier {
+    Urgent,
+    Low,
+    Mid,
+    Good,
+}
+
+impl Tier {
+    pub fn id(self) -> &'static str {
+        match self {
+            Tier::Urgent => "urgent",
+            Tier::Low => "low",
+            Tier::Mid => "mid",
+            Tier::Good => "good",
+        }
+    }
+
+    /// The word shown on the taskbar strip.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tier::Urgent => "Charge now",
+            Tier::Low => "Low",
+            Tier::Mid => "Mid",
+            Tier::Good => "Good",
+        }
+    }
+}
+
+/// Lowest percentage of Low, Mid and Good; below the first is Urgent.
+const FLOORS: [(u8, Tier); 3] = [(8, Tier::Low), (21, Tier::Mid), (51, Tier::Good)];
+/// A better band is only entered once the charge is this far past its floor, so a reading
+/// that hovers on a boundary does not flip the band back and forth.
+const CLIMB: u8 = 4;
+
+/// The band for a percentage, given the band shown before.
+pub fn tier(percent: u8, previous: Option<Tier>) -> Tier {
+    let band = |margin: u8| FLOORS.iter().rev().find(|(floor, _)| percent >= floor + margin).map_or(Tier::Urgent, |f| f.1);
+    let plain = band(0);
+    match previous {
+        Some(before) if plain > before => band(CLIMB).max(before),
+        _ => plain,
+    }
+}
+
+/// How many checks in a row must agree before Low or Charge now is shown.
+const CONFIRM: u8 = 3;
+
+/// The band on screen. Good and Mid show at once. Low and Charge now set off colours and a
+/// notification, so they are held back until several checks in a row say the same; a single
+/// wrong reading, or the first reading after the mouse wakes, can never raise an alarm.
+#[derive(Debug, Default)]
+pub struct Bands {
+    shown: Option<Tier>,
+    /// The mildest band seen in the current run of alarming checks, and how long the run is.
+    doubt: Option<(Tier, u8)>,
+}
+
+impl Bands {
+    pub fn shown(&self) -> Option<Tier> {
+        self.shown
+    }
+
+    /// Take one steadied percentage and return the band to show, if any yet.
+    pub fn push(&mut self, percent: u8) -> Option<Tier> {
+        let next = tier(percent, self.shown);
+        let alarming = next <= Tier::Low && self.shown.map_or(true, |shown| next < shown);
+        if !alarming {
+            self.doubt = None;
+            self.shown = Some(next);
+            return self.shown;
+        }
+        let (mildest, run) = match self.doubt {
+            Some((mildest, run)) => (mildest.max(next), run + 1),
+            None => (next, 1),
+        };
+        if run >= CONFIRM {
+            self.doubt = None;
+            self.shown = Some(mildest);
+        } else {
+            self.doubt = Some((mildest, run));
+        }
+        self.shown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Smoother;
@@ -113,5 +201,67 @@ mod tests {
         assert_eq!(s.push(60, false), (60, false));
         assert_eq!(s.push(1, true), (60, false));
         assert_eq!(s.push(60, false), (60, false));
+    }
+
+    #[test]
+    fn bands_cover_the_range() {
+        use super::{tier, Tier};
+        assert_eq!(tier(100, None), Tier::Good);
+        assert_eq!(tier(51, None), Tier::Good);
+        assert_eq!(tier(50, None), Tier::Mid);
+        assert_eq!(tier(21, None), Tier::Mid);
+        assert_eq!(tier(20, None), Tier::Low);
+        assert_eq!(tier(8, None), Tier::Low);
+        assert_eq!(tier(7, None), Tier::Urgent);
+        assert_eq!(tier(0, None), Tier::Urgent);
+    }
+
+    #[test]
+    fn a_band_does_not_flicker_at_its_edge() {
+        use super::{tier, Tier};
+        // Dropping is immediate, climbing back needs a clear margin.
+        assert_eq!(tier(50, Some(Tier::Good)), Tier::Mid);
+        assert_eq!(tier(52, Some(Tier::Mid)), Tier::Mid);
+        assert_eq!(tier(54, Some(Tier::Mid)), Tier::Mid);
+        assert_eq!(tier(55, Some(Tier::Mid)), Tier::Good);
+        assert_eq!(tier(9, Some(Tier::Urgent)), Tier::Urgent);
+        assert_eq!(tier(12, Some(Tier::Urgent)), Tier::Low);
+        // A big jump while charging lands in the right band at once.
+        assert_eq!(tier(90, Some(Tier::Urgent)), Tier::Good);
+        assert_eq!(tier(22, Some(Tier::Urgent)), Tier::Low);
+    }
+
+    #[test]
+    fn an_alarm_needs_several_checks_in_a_row() {
+        use super::{Bands, Tier};
+        let mut b = Bands::default();
+        assert_eq!(b.push(60), Some(Tier::Good));
+        // One or two wrong readings change nothing.
+        assert_eq!(b.push(1), Some(Tier::Good));
+        assert_eq!(b.push(1), Some(Tier::Good));
+        assert_eq!(b.push(60), Some(Tier::Good));
+        assert_eq!(b.push(15), Some(Tier::Good));
+        assert_eq!(b.push(60), Some(Tier::Good));
+        // Three in a row are believed, at the mildest level they agree on.
+        assert_eq!(b.push(5), Some(Tier::Good));
+        assert_eq!(b.push(15), Some(Tier::Good));
+        assert_eq!(b.push(5), Some(Tier::Low));
+        assert_eq!(b.push(5), Some(Tier::Low));
+        assert_eq!(b.push(5), Some(Tier::Low));
+        assert_eq!(b.push(5), Some(Tier::Urgent));
+        // Good news is shown at once.
+        assert_eq!(b.push(80), Some(Tier::Good));
+    }
+
+    #[test]
+    fn nothing_alarming_is_shown_on_the_first_reading() {
+        use super::{Bands, Tier};
+        let mut b = Bands::default();
+        assert_eq!(b.push(3), None);
+        assert_eq!(b.push(3), None);
+        assert_eq!(b.push(3), Some(Tier::Urgent));
+        let mut b = Bands::default();
+        assert_eq!(b.push(3), None);
+        assert_eq!(b.push(40), Some(Tier::Mid));
     }
 }

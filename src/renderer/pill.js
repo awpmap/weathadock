@@ -42,8 +42,8 @@
         if (hs.length) html += '<i class="p-sep"></i><span class="d-hours" data-open="hourly">' + hs.map(function (h) {
           return '<span class="d-h">' + I.wx(h.icon, h.isDay) + '<span class="d-tx"><b>' + U.deg(h.temp) + '</b><span>' + esc(U.hour(h.time, tz)) + '</span></span></span>';
         }).join('') + '</span>';
-        if (batt) html += '<i class="p-sep d-bsep"></i><span class="d-h d-batt' + (batt.low ? ' is-low' : '') + (batt.stale ? ' is-stale' : '') + '" title="' + (batt.stale ? 'Mouse battery, last read ' + batt.age + '. The mouse is asleep or off.' : 'Mouse battery') + '">' + I.gl('mouse') +
-          '<span class="d-tx"><b>' + batt.percent + '%</b><span>' + (batt.stale ? batt.age : batt.charging ? 'Charging' : 'Mouse') + '</span></span></span>';
+        if (batt) html += '<i class="p-sep d-bsep"></i><span class="d-h d-batt' + (batt.urgent ? ' is-urgent' : batt.low ? ' is-low' : '') + (batt.stale ? ' is-stale' : '') + '" title="' + (batt.stale ? 'Mouse battery, last read ' + batt.age + '. The mouse is asleep or off.' : 'Mouse battery') + '">' + I.gl('mouse') +
+          '<span class="d-tx"><b>' + esc(batt.label) + '</b><span>' + (batt.stale ? batt.age : batt.charging ? 'Charging' : 'Mouse') + '</span></span></span>';
       }
     }
     var sig = cls + html;
@@ -85,7 +85,7 @@
     }
     sky.onSettings(place);
     sky.getSettings().then(place);
-    if (sky.onBattery) { var power = function (b) { batt = b && b.percent != null ? b : null; last = ''; render(); }; sky.onBattery(power); sky.getBattery().then(power); }
+    if (sky.onBattery) { var power = function (b) { batt = b && b.tier ? b : null; last = ''; render(); }; sky.onBattery(power); sky.getBattery().then(power); }
     if (sky.onDock) { sky.onDock(bar); sky.getDock().then(bar); }
     sky.onState(function (s) { state = s; render(); });
     sky.getState().then(function (s) { state = s; render(); });

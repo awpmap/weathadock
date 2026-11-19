@@ -556,7 +556,7 @@
     if (p && p.dataset.zip !== places.activeZip) pickPlace(p.dataset.zip);
   });
 
-  var battery = null;
+  var battery = null, levelText = { good: 'good', mid: 'mid', low: 'low', urgent: 'almost empty' };
   function applySettings() {
     var s = settings;
     if (!s) return;
@@ -571,8 +571,8 @@
     if (current === 'widget') window.WDCustomize.update(state, settings);
     $('battery-sub').textContent = !s.mouseBattery
       ? 'Show a Logitech wireless mouse\u2019s charge on the taskbar strip and in the tray tooltip.'
-      : battery && battery.stale ? 'Your mouse was at ' + battery.percent + '% when last read, ' + battery.age + '. It is asleep, off or out of reach.'
-      : battery ? 'Your mouse is at ' + battery.percent + '%' + (battery.charging ? ' and charging.' : '.')
+      : battery && battery.stale ? 'Last read ' + battery.age + ': ' + levelText[battery.tier] + '. The mouse is asleep, off or out of reach.'
+      : battery ? 'Your mouse battery is ' + levelText[battery.tier] + (battery.charging ? ' and charging.' : battery.urgent ? '. Charge it now.' : '.')
       : 'Looking for a Logitech wireless mouse. Move it to wake it up.';
     $('battery-copy').hidden = !s.mouseBattery;
     var docked = s.placement === 'taskbar';
@@ -726,7 +726,7 @@
         setTimeout(function () { link.textContent = 'Copy details'; }, 1800);
       }, function () { link.textContent = 'Could not copy'; });
     });
-    if (sky.onBattery) { var power = function (b) { battery = b && b.percent != null ? b : null; applySettings(); }; sky.onBattery(power); sky.getBattery().then(power); }
+    if (sky.onBattery) { var power = function (b) { battery = b && b.tier ? b : null; applySettings(); }; sky.onBattery(power); sky.getBattery().then(power); }
     sky.onNavigate(function (sec) { go(sec); });
     sky.getSettings().then(function (s) { settings = s; applySettings(); });
     if (sky.onLocations) sky.onLocations(function (v) { if (v) { places = v; renderPlaces(); renderHead(); } });

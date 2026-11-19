@@ -61,7 +61,9 @@ struct Shared {
     battery_at: Mutex<i64>,
     battery_age_sent: Mutex<i64>,
     battery_log: Mutex<std::collections::VecDeque<String>>,
-    battery_warned: AtomicBool,
+    battery_tier: Mutex<weathadock_core::battery::Bands>,
+    /// The band the user was last notified about (low or urgent), so each is announced once.
+    battery_warned: Mutex<Option<weathadock_core::battery::Tier>>,
     /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
     dock: Mutex<(u32, bool)>,
     pending_section: Mutex<Option<String>>,
@@ -255,7 +257,6 @@ fn start_scheduler(app: &AppHandle) {
 // Checked on every scheduler pass (20 s), so plugging the mouse in shows up quickly. One check is a single
 // short exchange with the receiver on a background thread.
 const BATTERY_EVERY_MS: i64 = 15_000;
-const BATTERY_LOW: u8 = 15;
 
 /// A reading older than this is shown as old: the mouse is asleep, switched off or out of reach.
 const BATTERY_STALE_MS: i64 = 3 * 60_000;
@@ -276,12 +277,17 @@ fn age_text(minutes: i64) -> String {
 }
 
 fn battery_info(app: &AppHandle) -> Value {
-    match *shared(app).battery.lock().unwrap() {
-        Some((percent, charging)) if flag(app, "mouseBattery") => {
+    use weathadock_core::battery::Tier;
+    let st = shared(app);
+    let reading = *st.battery.lock().unwrap();
+    let tier = st.battery_tier.lock().unwrap().shown();
+    match (reading, tier) {
+        (Some((_, charging)), Some(tier)) if flag(app, "mouseBattery") => {
             let age = battery_age(app);
-            // An old reading says nothing about charging or being low right now.
+            // An old reading says nothing about charging right now.
             let (charging, stale) = (charging && age < 0, age >= 0);
-            json!({ "percent": percent, "charging": charging, "low": percent <= BATTERY_LOW && !charging && !stale,
+            json!({ "tier": tier.id(), "label": tier.label(), "charging": charging,
+                    "low": tier == Tier::Low && !charging, "urgent": tier == Tier::Urgent && !charging,
                     "stale": stale, "age": if stale { Value::from(age_text(age)) } else { Value::Null } })
         }
         _ => Value::Null,
@@ -327,14 +333,33 @@ fn check_battery(app: &AppHandle, now: bool) {
         if let Some((raw_percent, raw_charging)) = reading {
             // Single readings wander with what the mouse is doing; show the steadied value.
             let (percent, charging) = st.battery_smooth.lock().unwrap().push(raw_percent, raw_charging);
-            line.push_str(&format!(" -> shown {percent}%{}", if charging { " charging" } else { "" }));
+            use weathadock_core::battery::Tier;
+            // The number wanders by a few points, so what is shown is the band it falls in.
+            // Low and Charge now only appear once several checks in a row agree.
+            let band = {
+                let mut bands = st.battery_tier.lock().unwrap();
+                let before = bands.shown();
+                let band = bands.push(percent);
+                changed = band != before;
+                band
+            };
+            line.push_str(&format!(" -> steadied {percent}%, shown {}{}", band.map_or("nothing yet", |b| b.label()), if charging { " charging" } else { "" }));
             *st.battery_at.lock().unwrap() = now_ms();
-            changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
-            if charging || percent > BATTERY_LOW + 5 {
-                st.battery_warned.store(false, Ordering::Relaxed);
-            } else if percent <= BATTERY_LOW && !st.battery_warned.swap(true, Ordering::Relaxed) {
-                let _ = app.notification().builder().title("Mouse battery low").body(format!("Your mouse is at {percent}%. Time to charge it.")).show();
+            changed |= st.battery.lock().unwrap().replace((percent, charging)).map(|b| b.1) != Some(charging);
+            // One notice when it gets low and one when it must be charged; charging or a good level resets both.
+            let mut warned = st.battery_warned.lock().unwrap();
+            if charging || band.map_or(true, |b| b >= Tier::Mid) {
+                *warned = None;
+            } else if let Some(band) = band.filter(|b| warned.map_or(true, |w| *b < w)) {
+                *warned = Some(band);
+                let (title, body) = if band == Tier::Urgent {
+                    ("Charge your mouse now", "The mouse battery is almost empty.")
+                } else {
+                    ("Mouse battery low", "Charge your mouse soon.")
+                };
+                let _ = app.notification().builder().title(title).body(body).show();
             }
+            drop(warned);
         }
         battery_note(&app, line);
         // Tell the windows when the reading changes, goes old, or its age moves on.
@@ -396,13 +421,20 @@ fn tray_tooltip(app: &AppHandle) -> String {
         parts.push(format!("⚠ {}{more}", alerts[0]["event"].as_str().unwrap_or("Alert")));
     }
     let battery = battery_info(app);
-    if let Some(percent) = battery["percent"].as_u64() {
+    if let Some(tier) = battery["tier"].as_str() {
+        let level = match tier {
+            "urgent" => "almost empty",
+            "low" => "low",
+            "mid" => "mid",
+            _ => "good",
+        };
         let note = match (battery["age"].as_str(), battery["charging"].as_bool()) {
             (Some(age), _) => format!(" (read {age})"),
             (None, Some(true)) => ", charging".to_string(),
+            (None, _) if tier == "urgent" => ", charge it now".to_string(),
             _ => String::new(),
         };
-        parts.push(format!("Mouse battery {percent}%{note}"));
+        parts.push(format!("Mouse battery {level}{note}"));
     }
     // Windows limits tray tooltips to 127 characters.
     parts.join("\n").chars().take(127).collect()
@@ -1367,7 +1399,8 @@ fn main() {
                 battery_at: Mutex::new(0),
                 battery_age_sent: Mutex::new(-1),
                 battery_log: Mutex::new(Default::default()),
-                battery_warned: AtomicBool::new(false),
+                battery_tier: Mutex::new(Default::default()),
+                battery_warned: Mutex::new(None),
                 pending_section: Mutex::new(None),
                 covered: Mutex::new(Covered::default()),
                 quitting: AtomicBool::new(false),

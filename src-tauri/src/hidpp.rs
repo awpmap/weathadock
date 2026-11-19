@@ -233,11 +233,12 @@ impl Channel {
         let raw = |r: &[u8; 16]| [r[0], r[1], r[2], r[3]];
         let battery = if let Some(index) = self.feature(device, FEATURE_UNIFIED_BATTERY)? {
             // [state of charge %, level, charging status, external power]. Status 0 is
-            // discharging, 1 to 3 are charging, slow charging and full on the charger; external
-            // power 1 means a cable or charging pad is supplying power.
+            // discharging; 1 to 4 are charging, nearly full, full and slow charging, all on the
+            // charger; 5 and 6 are battery faults. External power 1 means a cable or charging
+            // pad is supplying power.
             let r = self.read(device, index, 1)?;
             // Anything outside what this feature can say is not a battery reading.
-            if r[0] > 100 || !matches!(r[1], 0 | 1 | 2 | 4 | 8) || r[2] > 5 || r[3] > 1 || (r[0] == 0 && r[1] == 0) {
+            if r[0] > 100 || !matches!(r[1], 0 | 1 | 2 | 4 | 8) || r[2] > 6 || r[3] > 1 || (r[0] == 0 && r[1] == 0) {
                 return Err(Unsure);
             }
             // Mice that do not report a percentage send 0 with a coarse level instead (8 full, 4 good, 2 low, 1 critical).
@@ -248,13 +249,7 @@ impl Channel {
                 (0, 1) => 5,
                 (percent, _) => percent,
             };
-            Battery { percent, charging: matches!(r[2], 1..=3) || r[3] == 1, feature: FEATURE_UNIFIED_BATTERY, device, raw: raw(&r) }
-        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS)? {
-            let r = self.read(device, index, 0)?; // [level %, next level %, status]
-            if r[0] > 100 || r[1] > 100 || r[2] > 7 {
-                return Err(Unsure);
-            }
-            Battery { percent: r[0], charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
+            Battery { percent, charging: matches!(r[2], 1..=4) || r[3] == 1, feature: FEATURE_UNIFIED_BATTERY, device, raw: raw(&r) }
         } else if let Some(index) = self.feature(device, FEATURE_BATTERY_VOLTAGE)? {
             let r = self.read(device, index, 0)?; // [millivolts (2 bytes), flags]
             let mv = u16::from_be_bytes([r[0], r[1]]);
@@ -262,6 +257,12 @@ impl Channel {
                 return Err(Unsure);
             }
             Battery { percent: percent_from_millivolts(mv), charging: r[2] & 0x80 != 0, feature: FEATURE_BATTERY_VOLTAGE, device, raw: raw(&r) }
+        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS)? {
+            let r = self.read(device, index, 0)?; // [level %, next level %, status]
+            if r[0] > 100 || r[1] > 100 || r[2] > 7 {
+                return Err(Unsure);
+            }
+            Battery { percent: r[0], charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
         } else {
             return Ok(None);
         };

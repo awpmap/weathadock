@@ -12,18 +12,26 @@ pub struct Smoother {
     recent: Vec<u8>,
     charging: bool,
     shown: Option<u8>,
+    /// A reading disagreed with the current charging state and is waiting for a second one.
+    flip_pending: bool,
 }
 
 impl Smoother {
-    /// Take one raw reading and return the percentage to show.
-    pub fn push(&mut self, percent: u8, charging: bool) -> u8 {
+    /// Take one raw reading and return the percentage and charging state to show.
+    pub fn push(&mut self, percent: u8, charging: bool) -> (u8, bool) {
         let percent = percent.min(100);
         if charging != self.charging {
-            // Plugging in or unplugging starts a new run; old readings no longer apply.
+            // Plugging in or unplugging must be seen twice in a row before it is believed.
+            if let (Some(shown), false) = (self.shown, self.flip_pending) {
+                self.flip_pending = true;
+                return (shown, self.charging);
+            }
+            // It starts a new run; old readings no longer apply.
             self.charging = charging;
             self.recent.clear();
             self.shown = None;
         }
+        self.flip_pending = false;
         if self.recent.len() == WINDOW {
             self.recent.remove(0);
         }
@@ -55,7 +63,7 @@ impl Smoother {
             }
         };
         self.shown = Some(next);
-        next
+        (next, charging)
     }
 }
 
@@ -65,7 +73,7 @@ mod tests {
 
     fn run(readings: &[u8], charging: bool) -> Vec<u8> {
         let mut s = Smoother::default();
-        readings.iter().map(|&p| s.push(p, charging)).collect()
+        readings.iter().map(|&p| s.push(p, charging).0).collect()
     }
 
     #[test]
@@ -88,11 +96,22 @@ mod tests {
     #[test]
     fn charging_rises_and_resets_when_unplugged() {
         let mut s = Smoother::default();
-        assert_eq!(s.push(40, true), 40);
-        assert_eq!(s.push(39, true), 40);
-        assert_eq!(s.push(42, true), 40);
-        assert_eq!(s.push(42, true), 40);
-        assert_eq!(s.push(43, true), 42);
-        assert_eq!(s.push(38, false), 38);
+        assert_eq!(s.push(40, true), (40, true));
+        assert_eq!(s.push(39, true), (40, true));
+        assert_eq!(s.push(42, true), (40, true));
+        assert_eq!(s.push(42, true), (40, true));
+        assert_eq!(s.push(43, true), (42, true));
+        assert_eq!(s.push(38, false), (42, true));
+        assert_eq!(s.push(38, false), (38, false));
+    }
+
+    #[test]
+    fn one_stray_charging_reading_changes_nothing() {
+        let mut s = Smoother::default();
+        assert_eq!(s.push(60, false), (60, false));
+        assert_eq!(s.push(15, true), (60, false));
+        assert_eq!(s.push(60, false), (60, false));
+        assert_eq!(s.push(1, true), (60, false));
+        assert_eq!(s.push(60, false), (60, false));
     }
 }

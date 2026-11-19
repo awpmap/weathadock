@@ -4,6 +4,7 @@
 //! It does not need Logitech G HUB and shares the device with it when it is running.
 #![cfg(windows)]
 
+use std::cell::Cell;
 use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
@@ -33,8 +34,17 @@ pub struct Battery {
 }
 
 const LONG_REPORT: u8 = 0x11;
-/// Marks our requests so replies meant for other software (G HUB) are not mistaken for ours.
-const SOFTWARE_ID: u8 = 0x0A;
+/// How a request ended. The difference matters: `Refused` is the device saying no, while
+/// `Silent` says nothing about it (asleep, reconnecting, or simply slow).
+enum Answer {
+    Reply([u8; 16]),
+    Refused,
+    Silent,
+}
+
+/// A device that went quiet mid-conversation. Its late replies would be mistaken for answers
+/// to later questions, so the whole reading is abandoned instead.
+struct Unsure;
 const ROOT: u8 = 0x00;
 const FEATURE_NAME_TYPE: u16 = 0x0005;
 const FEATURE_BATTERY_STATUS: u16 = 0x1000;
@@ -46,6 +56,9 @@ struct Channel {
     handle: HANDLE,
     event: HANDLE,
     input_len: usize,
+    /// Tag of the last request. Every request gets a new one, so a late reply to an earlier
+    /// request, or a reply meant for other software such as G HUB, is not taken for ours.
+    tag: Cell<u8>,
 }
 
 impl Drop for Channel {
@@ -120,7 +133,7 @@ fn open(path: &[u16]) -> Option<Channel> {
         let vendor_page = caps.UsagePage == 0xFF00 || caps.UsagePage == 0xFF43;
         let event = if known && vendor_page && caps.OutputReportByteLength == 20 { CreateEventW(None, true, false, PCWSTR::null()).ok() } else { None };
         match event {
-            Some(event) => Some(Channel { handle, event, input_len: (caps.InputReportByteLength as usize).max(20) }),
+            Some(event) => Some(Channel { handle, event, input_len: (caps.InputReportByteLength as usize).max(20), tag: Cell::new(start_tag()) }),
             None => {
                 let _ = CloseHandle(handle);
                 None
@@ -154,10 +167,12 @@ impl Channel {
         Some(done)
     }
 
-    /// Send a HID++ 2.0 request and wait for its reply. `None` on an error reply or no answer
-    /// (the device at that index is absent, asleep or switched off).
-    fn request(&self, device: u8, feature_index: u8, function: u8, params: &[u8]) -> Option<[u8; 16]> {
-        let address = (function << 4) | SOFTWARE_ID;
+    /// Send a HID++ 2.0 request and wait for its answer.
+    fn request(&self, device: u8, feature_index: u8, function: u8, params: &[u8]) -> Answer {
+        // Tags run 1 to 15; 0 is what devices use for their own announcements.
+        let tag = self.tag.get() % 15 + 1;
+        self.tag.set(tag);
+        let address = (function << 4) | tag;
         let mut out = [0u8; 20];
         out[0] = LONG_REPORT;
         out[1] = device;
@@ -165,67 +180,103 @@ impl Channel {
         out[3] = address;
         out[4..4 + params.len()].copy_from_slice(params);
         unsafe {
-            self.transfer(true, &mut out, Duration::from_millis(300))?;
+            if self.transfer(true, &mut out, Duration::from_millis(300)).is_none() {
+                return Answer::Silent;
+            }
             let deadline = Instant::now() + Duration::from_millis(450);
             let mut input = vec![0u8; self.input_len];
             loop {
-                let left = deadline.checked_duration_since(Instant::now())?;
-                let got = self.transfer(false, &mut input, left)? as usize;
-                if got < 7 || input[0] != LONG_REPORT || input[1] != device {
+                let Some(left) = deadline.checked_duration_since(Instant::now()) else { return Answer::Silent };
+                let Some(got) = self.transfer(false, &mut input, left) else { return Answer::Silent };
+                if (got as usize) < 7 || input[0] != LONG_REPORT || input[1] != device {
                     continue; // something else on the same channel, such as a notification
                 }
                 if input[2] == feature_index && input[3] == address {
                     let mut reply = [0u8; 16];
                     reply.copy_from_slice(&input[4..20]);
-                    return Some(reply);
+                    return Answer::Reply(reply);
                 }
                 if input[2] == 0xFF && input[3] == feature_index && input[4] == address {
-                    return None; // HID++ 2.0 error reply
+                    return Answer::Refused; // HID++ 2.0 error reply
                 }
             }
         }
     }
 
-    /// Index of a feature on the device, or `None` when it does not have it.
-    fn feature(&self, device: u8, id: u16) -> Option<u8> {
-        let reply = self.request(device, ROOT, 0, &id.to_be_bytes())?;
-        (reply[0] != 0).then_some(reply[0])
+    /// Index of a feature on the device: `Ok(None)` when the device says it does not have it.
+    /// Asked twice, and both answers must agree, because the answer does not name the feature
+    /// it is about and a wrong index would make some unrelated reply look like a battery level.
+    fn feature(&self, device: u8, id: u16) -> Result<Option<u8>, Unsure> {
+        let ask = || match self.request(device, ROOT, 0, &id.to_be_bytes()) {
+            Answer::Reply(r) => Ok(r[0]),
+            Answer::Refused => Ok(0),
+            Answer::Silent => Err(Unsure),
+        };
+        let (first, second) = (ask()?, ask()?);
+        if first != second {
+            return Err(Unsure);
+        }
+        Ok((first != 0).then_some(first))
+    }
+
+    /// One reading from a battery feature, or `Unsure` if the device did not answer plainly.
+    fn read(&self, device: u8, index: u8, function: u8) -> Result<[u8; 16], Unsure> {
+        match self.request(device, index, function, &[]) {
+            Answer::Reply(r) => Ok(r),
+            _ => Err(Unsure),
+        }
     }
 
     /// Battery of the device at `device`, and whether that device is a mouse or trackball
-    /// (`None` when the device did not say what it is).
-    fn battery(&self, device: u8) -> Option<(Battery, Option<bool>)> {
+    /// (`None` when the device did not say what it is). Any doubt gives no reading at all.
+    fn battery(&self, device: u8) -> Result<Option<(Battery, Option<bool>)>, Unsure> {
         let raw = |r: &[u8; 16]| [r[0], r[1], r[2], r[3]];
-        let battery = if let Some(index) = self.feature(device, FEATURE_UNIFIED_BATTERY) {
-            // [state of charge %, level, charging status, external power]. Status 1 to 3 are
-            // charging, slow charging and full on the charger; external power 1 means a cable
-            // or charging pad is supplying power, which some mice report before the status changes.
-            let r = self.request(device, index, 1, &[])?;
+        let battery = if let Some(index) = self.feature(device, FEATURE_UNIFIED_BATTERY)? {
+            // [state of charge %, level, charging status, external power]. Status 0 is
+            // discharging, 1 to 3 are charging, slow charging and full on the charger; external
+            // power 1 means a cable or charging pad is supplying power.
+            let r = self.read(device, index, 1)?;
+            // Anything outside what this feature can say is not a battery reading.
+            if r[0] > 100 || !matches!(r[1], 0 | 1 | 2 | 4 | 8) || r[2] > 5 || r[3] > 1 || (r[0] == 0 && r[1] == 0) {
+                return Err(Unsure);
+            }
             // Mice that do not report a percentage send 0 with a coarse level instead (8 full, 4 good, 2 low, 1 critical).
             let percent = match (r[0], r[1]) {
-                (0, level) if level & 8 != 0 => 90,
-                (0, level) if level & 4 != 0 => 50,
-                (0, level) if level & 2 != 0 => 20,
-                (0, level) if level & 1 != 0 => 5,
-                (percent, _) => percent.min(100),
+                (0, 8) => 90,
+                (0, 4) => 50,
+                (0, 2) => 20,
+                (0, 1) => 5,
+                (percent, _) => percent,
             };
             Battery { percent, charging: matches!(r[2], 1..=3) || r[3] == 1, feature: FEATURE_UNIFIED_BATTERY, device, raw: raw(&r) }
-        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS) {
-            let r = self.request(device, index, 0, &[])?; // [level %, next level %, status]
-            Battery { percent: r[0].min(100), charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
-        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_VOLTAGE) {
-            let r = self.request(device, index, 0, &[])?; // [millivolts (2 bytes), flags]
-            Battery { percent: percent_from_millivolts(u16::from_be_bytes([r[0], r[1]])), charging: r[2] & 0x80 != 0, feature: FEATURE_BATTERY_VOLTAGE, device, raw: raw(&r) }
+        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS)? {
+            let r = self.read(device, index, 0)?; // [level %, next level %, status]
+            if r[0] > 100 || r[1] > 100 || r[2] > 7 {
+                return Err(Unsure);
+            }
+            Battery { percent: r[0], charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
+        } else if let Some(index) = self.feature(device, FEATURE_BATTERY_VOLTAGE)? {
+            let r = self.read(device, index, 0)?; // [millivolts (2 bytes), flags]
+            let mv = u16::from_be_bytes([r[0], r[1]]);
+            if !(3000..=4500).contains(&mv) {
+                return Err(Unsure);
+            }
+            Battery { percent: percent_from_millivolts(mv), charging: r[2] & 0x80 != 0, feature: FEATURE_BATTERY_VOLTAGE, device, raw: raw(&r) }
         } else {
-            return None;
+            return Ok(None);
         };
         // Device type: 3 is a mouse and 5 a trackball; keyboards, headsets and the like are other values.
-        let pointer = self
-            .feature(device, FEATURE_NAME_TYPE)
-            .and_then(|index| self.request(device, index, 2, &[]))
-            .map(|r| matches!(r[0], 3 | 5));
-        Some((battery, pointer))
+        let pointer = match self.feature(device, FEATURE_NAME_TYPE)? {
+            Some(index) => Some(matches!(self.read(device, index, 2)?[0], 3 | 5)),
+            None => None,
+        };
+        Ok(Some((battery, pointer)))
     }
+}
+
+/// Where the request tags start, different on each run so two programs rarely share one.
+fn start_tag() -> u8 {
+    (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()) % 15) as u8
 }
 
 /// Approximate charge of a single lithium cell from its voltage (for mice that report volts).
@@ -257,8 +308,8 @@ pub fn mouse_battery() -> Option<Battery> {
         // 1: the device paired to a Lightspeed receiver; 0xFF: a mouse connected by cable; 2: a second paired device.
         for device in [0x01, 0xFF, 0x02] {
             match channel.battery(device) {
-                Some((battery, Some(true))) => return Some(battery),
-                Some((battery, None)) => unknown = unknown.or(Some(battery)),
+                Ok(Some((battery, Some(true)))) => return Some(battery),
+                Ok(Some((battery, None))) => unknown = unknown.or(Some(battery)),
                 _ => {}
             }
         }

@@ -288,8 +288,9 @@ fn check_battery(app: &AppHandle, now: bool) {
             return;
         };
         // Single readings wander with what the mouse is doing; show the steadied value.
-        let percent = st.battery_smooth.lock().unwrap().push(raw_percent, charging);
-        trace(format!("mouse battery -> read {raw_percent}% shown {percent}% charging {charging}"));
+        let raw_charging = charging;
+        let (percent, charging) = st.battery_smooth.lock().unwrap().push(raw_percent, raw_charging);
+        trace(format!("mouse battery -> read {raw_percent}% charging {raw_charging}, shown {percent}% charging {charging}"));
         let changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
         if charging || percent > BATTERY_LOW + 5 {
             st.battery_warned.store(false, Ordering::Relaxed);

@@ -1,6 +1,6 @@
-## WeathaDock 1.1.10
+## WeathaDock 1.1.11
 
-**Starts with Windows.** WeathaDock now opens quietly when you sign in, straight to the widget or taskbar strip with no window. The setting was already on, but the app never actually registered itself with Windows unless you flipped the switch. You can turn it off in Settings under "Start with Windows".
+**Mouse battery you can trust.** Fixed the mouse battery showing a wrong low percentage or "Charging" when the mouse was not plugged in, most often right after the mouse woke from sleep. When a mouse was slow to answer, a late reply to one question could be read as the answer to another. Every exchange with the mouse is now double-checked, anything doubtful is thrown away and the last good reading stays on screen, and a change between charging and not charging has to be seen twice before it is shown.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

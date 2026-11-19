@@ -56,6 +56,11 @@ struct Shared {
     battery: Mutex<Option<(u8, bool)>>,
     battery_smooth: Mutex<weathadock_core::battery::Smoother>,
     battery_tried: Mutex<i64>,
+    /// When the mouse last gave a good reading, the age last sent to the windows (minutes, -1 when
+    /// fresh), and what the last checks found, for "Copy details" in Settings.
+    battery_at: Mutex<i64>,
+    battery_age_sent: Mutex<i64>,
+    battery_log: Mutex<std::collections::VecDeque<String>>,
     battery_warned: AtomicBool,
     /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
     dock: Mutex<(u32, bool)>,
@@ -252,15 +257,50 @@ fn start_scheduler(app: &AppHandle) {
 const BATTERY_EVERY_MS: i64 = 15_000;
 const BATTERY_LOW: u8 = 15;
 
+/// A reading older than this is shown as old: the mouse is asleep, switched off or out of reach.
+const BATTERY_STALE_MS: i64 = 3 * 60_000;
+
+/// Minutes since the last good reading once it counts as old, otherwise -1.
+fn battery_age(app: &AppHandle) -> i64 {
+    let at = *shared(app).battery_at.lock().unwrap();
+    let age = now_ms() - at;
+    if at > 0 && age > BATTERY_STALE_MS { age / 60_000 } else { -1 }
+}
+
+fn age_text(minutes: i64) -> String {
+    match minutes {
+        m if m < 60 => format!("{m} min ago"),
+        m if m < 48 * 60 => format!("{} h ago", m / 60),
+        m => format!("{} d ago", m / 1440),
+    }
+}
+
 fn battery_info(app: &AppHandle) -> Value {
     match *shared(app).battery.lock().unwrap() {
-        Some((percent, charging)) if flag(app, "mouseBattery") => json!({ "percent": percent, "charging": charging, "low": percent <= BATTERY_LOW && !charging }),
+        Some((percent, charging)) if flag(app, "mouseBattery") => {
+            let age = battery_age(app);
+            // An old reading says nothing about charging or being low right now.
+            let (charging, stale) = (charging && age < 0, age >= 0);
+            json!({ "percent": percent, "charging": charging, "low": percent <= BATTERY_LOW && !charging && !stale,
+                    "stale": stale, "age": if stale { Value::from(age_text(age)) } else { Value::Null } })
+        }
         _ => Value::Null,
     }
 }
 
-/// Read the mouse battery when the option is on: every few minutes, or right away with `now`.
-/// The last reading is kept while the mouse is asleep, so the number does not come and go.
+/// Keep the last checks for "Copy details" in Settings: what each device answered, nothing else.
+fn battery_note(app: &AppHandle, line: String) {
+    trace(format!("mouse battery: {line}"));
+    let st = shared(app);
+    let mut log = st.battery_log.lock().unwrap();
+    if log.len() == 60 {
+        log.pop_front();
+    }
+    log.push_back(format!("{} {line}", chrono::Local::now().format("%H:%M:%S")));
+}
+
+/// Read the mouse battery when the option is on: on every scheduler pass, or right away with `now`.
+/// The last reading is kept while the mouse is asleep, and marked as old after a few minutes.
 fn check_battery(app: &AppHandle, now: bool) {
     let st = shared(app);
     if !flag(app, "mouseBattery") {
@@ -276,26 +316,31 @@ fn check_battery(app: &AppHandle, now: bool) {
     let app = app.clone();
     std::thread::spawn(move || {
         #[cfg(windows)]
-        let reading = hidpp::mouse_battery().map(|b| {
-            trace(format!("mouse battery raw feature={:04x} device={:02x} bytes={:02x?}", b.feature, b.device, b.raw));
-            (b.percent, b.charging)
-        });
+        let (reading, notes) = hidpp::mouse_battery();
+        #[cfg(windows)]
+        let reading = reading.map(|b| (b.percent, b.charging));
         #[cfg(not(windows))]
-        let reading: Option<(u8, bool)> = None;
+        let (reading, notes): (Option<(u8, bool)>, Vec<String>) = (None, Vec::new());
         let st = shared(&app);
-        let Some((raw_percent, charging)) = reading else {
-            trace("mouse battery -> None".to_string());
-            return;
-        };
-        // Single readings wander with what the mouse is doing; show the steadied value.
-        let raw_charging = charging;
-        let (percent, charging) = st.battery_smooth.lock().unwrap().push(raw_percent, raw_charging);
-        trace(format!("mouse battery -> read {raw_percent}% charging {raw_charging}, shown {percent}% charging {charging}"));
-        let changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
-        if charging || percent > BATTERY_LOW + 5 {
-            st.battery_warned.store(false, Ordering::Relaxed);
-        } else if percent <= BATTERY_LOW && !st.battery_warned.swap(true, Ordering::Relaxed) {
-            let _ = app.notification().builder().title("Mouse battery low").body(format!("Your mouse is at {percent}%. Time to charge it.")).show();
+        let mut changed = false;
+        let mut line = notes.join("; ");
+        if let Some((raw_percent, raw_charging)) = reading {
+            // Single readings wander with what the mouse is doing; show the steadied value.
+            let (percent, charging) = st.battery_smooth.lock().unwrap().push(raw_percent, raw_charging);
+            line.push_str(&format!(" -> shown {percent}%{}", if charging { " charging" } else { "" }));
+            *st.battery_at.lock().unwrap() = now_ms();
+            changed = st.battery.lock().unwrap().replace((percent, charging)) != Some((percent, charging));
+            if charging || percent > BATTERY_LOW + 5 {
+                st.battery_warned.store(false, Ordering::Relaxed);
+            } else if percent <= BATTERY_LOW && !st.battery_warned.swap(true, Ordering::Relaxed) {
+                let _ = app.notification().builder().title("Mouse battery low").body(format!("Your mouse is at {percent}%. Time to charge it.")).show();
+            }
+        }
+        battery_note(&app, line);
+        // Tell the windows when the reading changes, goes old, or its age moves on.
+        let age = battery_age(&app);
+        if std::mem::replace(&mut *st.battery_age_sent.lock().unwrap(), age) != age {
+            changed = true;
         }
         if changed {
             let _ = app.emit("sky:battery", battery_info(&app));
@@ -350,8 +395,14 @@ fn tray_tooltip(app: &AppHandle) -> String {
         let more = if alerts.len() > 1 { format!(" +{}", alerts.len() - 1) } else { String::new() };
         parts.push(format!("⚠ {}{more}", alerts[0]["event"].as_str().unwrap_or("Alert")));
     }
-    if let Some(percent) = battery_info(app)["percent"].as_u64() {
-        parts.push(format!("Mouse battery {percent}%"));
+    let battery = battery_info(app);
+    if let Some(percent) = battery["percent"].as_u64() {
+        let note = match (battery["age"].as_str(), battery["charging"].as_bool()) {
+            (Some(age), _) => format!(" (read {age})"),
+            (None, Some(true)) => ", charging".to_string(),
+            _ => String::new(),
+        };
+        parts.push(format!("Mouse battery {percent}%{note}"));
     }
     // Windows limits tray tooltips to 127 characters.
     parts.join("\n").chars().take(127).collect()
@@ -1230,6 +1281,20 @@ fn get_battery(app: AppHandle) -> Value {
     battery_info(&app)
 }
 
+/// What the last mouse battery checks found, as text the user can copy and send. It holds only
+/// the app version, Logitech product ids and the battery replies.
+#[tauri::command]
+fn get_battery_log(app: AppHandle) -> String {
+    let st = shared(&app);
+    let log = st.battery_log.lock().unwrap();
+    let mut text = format!("WeathaDock {} mouse battery details\n", app.package_info().version);
+    for line in log.iter() {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
+}
+
 #[tauri::command]
 fn get_dock(app: AppHandle) -> Value {
     // Measure now: the strip's page can ask before the window has been placed for the first time.
@@ -1271,7 +1336,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state, get_settings, set_settings, get_locations, lookup_zip, add_location, remove_location,
             set_active_location, complete_setup, refresh_now, open_detail_cmd, take_pending_section, window_control,
-            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_battery, get_update_state,
+            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_battery, get_battery_log, get_update_state,
             check_for_updates, install_update, quit_cmd
         ])
         .setup(|app| {
@@ -1299,6 +1364,9 @@ fn main() {
                 battery: Mutex::new(None),
                 battery_smooth: Mutex::new(Default::default()),
                 battery_tried: Mutex::new(0),
+                battery_at: Mutex::new(0),
+                battery_age_sent: Mutex::new(-1),
+                battery_log: Mutex::new(Default::default()),
                 battery_warned: AtomicBool::new(false),
                 pending_section: Mutex::new(None),
                 covered: Mutex::new(Covered::default()),

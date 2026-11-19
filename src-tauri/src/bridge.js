@@ -41,6 +41,7 @@
     getDock: function () { return invoke('get_dock'); },
     onDock: on('sky:dock'),
     getBattery: function () { return invoke('get_battery'); },
+    getBatteryLog: function () { return invoke('get_battery_log'); },
     onBattery: on('sky:battery'),
     getUpdateState: function () { return invoke('get_update_state'); },
     onUpdateState: on('sky:updateState'),

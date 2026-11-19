@@ -1,6 +1,8 @@
-## WeathaDock 1.1.12
+## WeathaDock 1.1.13
 
-**Mouse battery you can trust.** Fixed the mouse battery showing a wrong low percentage or "Charging" when the mouse was not plugged in, most often right after the mouse woke from sleep. When a mouse was slow to answer, a late reply to one question could be read as the answer to another. Every exchange with the mouse is now double-checked, anything doubtful is thrown away and the last good reading stays on screen, and a change between charging and not charging has to be seen twice before it is shown. The readings were also checked against how Logitech's own Onboard Memory Manager interprets them, which added slow charging as a charging state.
+**Mouse battery shows when it is out of date.** If the mouse has not answered for a few minutes (asleep, switched off or out of reach), the taskbar strip now dims the percentage and shows how old it is, such as "12 min ago", instead of holding an old number as if it were current. Readings are also accepted more readily, so a correct answer from the mouse is no longer thrown away over a detail that does not matter.
+
+**Copy details.** Settings has a "Copy details" link beside Mouse battery. It copies what the last battery checks found, which makes a wrong number quick to track down. It contains only the app version, the Logitech product id and the battery replies.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

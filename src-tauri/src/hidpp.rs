@@ -44,7 +44,7 @@ enum Answer {
 
 /// A device that went quiet mid-conversation. Its late replies would be mistaken for answers
 /// to later questions, so the whole reading is abandoned instead.
-struct Unsure;
+struct Unsure(&'static str);
 const ROOT: u8 = 0x00;
 const FEATURE_NAME_TYPE: u16 = 0x0005;
 const FEATURE_BATTERY_STATUS: u16 = 0x1000;
@@ -210,11 +210,11 @@ impl Channel {
         let ask = || match self.request(device, ROOT, 0, &id.to_be_bytes()) {
             Answer::Reply(r) => Ok(r[0]),
             Answer::Refused => Ok(0),
-            Answer::Silent => Err(Unsure),
+            Answer::Silent => Err(Unsure("no answer when asked for a feature")),
         };
         let (first, second) = (ask()?, ask()?);
         if first != second {
-            return Err(Unsure);
+            return Err(Unsure("two different answers for the same feature"));
         }
         Ok((first != 0).then_some(first))
     }
@@ -223,7 +223,8 @@ impl Channel {
     fn read(&self, device: u8, index: u8, function: u8) -> Result<[u8; 16], Unsure> {
         match self.request(device, index, function, &[]) {
             Answer::Reply(r) => Ok(r),
-            _ => Err(Unsure),
+            Answer::Refused => Err(Unsure("the device refused the reading")),
+            Answer::Silent => Err(Unsure("no answer when asked for the reading")),
         }
     }
 
@@ -238,8 +239,8 @@ impl Channel {
             // pad is supplying power.
             let r = self.read(device, index, 1)?;
             // Anything outside what this feature can say is not a battery reading.
-            if r[0] > 100 || !matches!(r[1], 0 | 1 | 2 | 4 | 8) || r[2] > 6 || r[3] > 1 || (r[0] == 0 && r[1] == 0) {
-                return Err(Unsure);
+            if r[0] > 100 || r[2] > 6 || (r[0] == 0 && !matches!(r[1], 1 | 2 | 4 | 8)) {
+                return Err(Unsure("the battery reply was out of range"));
             }
             // Mice that do not report a percentage send 0 with a coarse level instead (8 full, 4 good, 2 low, 1 critical).
             let percent = match (r[0], r[1]) {
@@ -254,13 +255,13 @@ impl Channel {
             let r = self.read(device, index, 0)?; // [millivolts (2 bytes), flags]
             let mv = u16::from_be_bytes([r[0], r[1]]);
             if !(3000..=4500).contains(&mv) {
-                return Err(Unsure);
+                return Err(Unsure("the voltage reply was out of range"));
             }
             Battery { percent: percent_from_millivolts(mv), charging: r[2] & 0x80 != 0, feature: FEATURE_BATTERY_VOLTAGE, device, raw: raw(&r) }
         } else if let Some(index) = self.feature(device, FEATURE_BATTERY_STATUS)? {
             let r = self.read(device, index, 0)?; // [level %, next level %, status]
             if r[0] > 100 || r[1] > 100 || r[2] > 7 {
-                return Err(Unsure);
+                return Err(Unsure("the level reply was out of range"));
             }
             Battery { percent: r[0], charging: matches!(r[2], 1..=4), feature: FEATURE_BATTERY_STATUS, device, raw: raw(&r) }
         } else {
@@ -302,20 +303,44 @@ fn percent_from_millivolts(mv: u16) -> u8 {
 /// Look for a Logitech wireless mouse and read its battery. Only a mouse counts: a Logitech
 /// keyboard or headset on the same PC is never shown in its place. A device that will not say
 /// what it is is used only when no mouse answered. `None` when nothing answered (asleep or absent).
-pub fn mouse_battery() -> Option<Battery> {
+/// The notes say what each device answered, for the details the user can copy from Settings.
+pub fn mouse_battery() -> (Option<Battery>, Vec<String>) {
     let mut unknown = None;
+    let mut notes = Vec::new();
+    let mut channels = 0;
     for path in logitech_paths() {
         let Some(channel) = open(&path) else { continue };
+        channels += 1;
+        // The product id says which receiver or mouse this is; the rest of the path is left out.
+        let text = String::from_utf16_lossy(&path).to_ascii_lowercase();
+        let product = text.find("pid_").and_then(|at| text.get(at + 4..at + 8)).unwrap_or("?").to_string();
         // 1: the device paired to a Lightspeed receiver; 0xFF: a mouse connected by cable; 2: a second paired device.
         for device in [0x01, 0xFF, 0x02] {
-            match channel.battery(device) {
-                Ok(Some((battery, Some(true)))) => return Some(battery),
-                Ok(Some((battery, None))) => unknown = unknown.or(Some(battery)),
-                _ => {}
-            }
+            let said = match channel.battery(device) {
+                Ok(Some((b, kind))) => {
+                    let what = match kind {
+                        Some(true) => "mouse",
+                        Some(false) => "not a mouse, skipped",
+                        None => "kind unknown",
+                    };
+                    notes.push(format!("{product}/{device:02x}: {what}, feature {:04x}, bytes {:02x?}, {}%{}", b.feature, b.raw, b.percent, if b.charging { " charging" } else { "" }));
+                    match kind {
+                        Some(true) => return (Some(b), notes),
+                        None => unknown = unknown.or(Some(b)),
+                        Some(false) => {}
+                    }
+                    continue;
+                }
+                Ok(None) => "no battery feature",
+                Err(Unsure(why)) => why,
+            };
+            notes.push(format!("{product}/{device:02x}: {said}"));
         }
     }
-    unknown
+    if channels == 0 {
+        notes.push("no Logitech receiver or mouse found".to_string());
+    }
+    (unknown, notes)
 }
 
 #[cfg(test)]

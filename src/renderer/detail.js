@@ -571,8 +571,10 @@
     if (current === 'widget') window.WDCustomize.update(state, settings);
     $('battery-sub').textContent = !s.mouseBattery
       ? 'Show a Logitech wireless mouse\u2019s charge on the taskbar strip and in the tray tooltip.'
+      : battery && battery.stale ? 'Your mouse was at ' + battery.percent + '% when last read, ' + battery.age + '. It is asleep, off or out of reach.'
       : battery ? 'Your mouse is at ' + battery.percent + '%' + (battery.charging ? ' and charging.' : '.')
       : 'Looking for a Logitech wireless mouse. Move it to wake it up.';
+    $('battery-copy').hidden = !s.mouseBattery;
     var docked = s.placement === 'taskbar';
     $('placement-sub').textContent = docked
       ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
@@ -717,6 +719,13 @@
   U.ready().then(function (sky) {
     sky.onState(function (s) { state = s; hideTip(); renderSection(); });
     sky.onSettings(function (s) { settings = s; applySettings(); });
+    $('battery-copy').addEventListener('click', function () {
+      var link = this;
+      sky.getBatteryLog().then(function (text) { return navigator.clipboard.writeText(text); }).then(function () {
+        link.textContent = 'Copied';
+        setTimeout(function () { link.textContent = 'Copy details'; }, 1800);
+      }, function () { link.textContent = 'Could not copy'; });
+    });
     if (sky.onBattery) { var power = function (b) { battery = b && b.percent != null ? b : null; applySettings(); }; sky.onBattery(power); sky.getBattery().then(power); }
     sky.onNavigate(function (sec) { go(sec); });
     sky.getSettings().then(function (s) { settings = s; applySettings(); });

@@ -328,4 +328,4 @@ chooses what the strip shows; patch it as a whole object. The pill drops hours, 
 ## Revision 6: mouse battery
 
 `Settings.mouseBattery: boolean` (default off). `sky.getBattery()` / `sky.onBattery(cb)` give
-`{ percent, charging, low } | null`, read from a Logitech wireless mouse over HID++ (see `hidpp.rs`).
+`{ percent, charging, low, stale, age } | null` (`stale` with `age` text such as "12 min ago" once the mouse has not answered for three minutes; `sky.getBatteryLog()` gives the last checks as copyable text), read from a Logitech wireless mouse over HID++ (see `hidpp.rs`).

@@ -86,6 +86,8 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 
 /* mouse battery: same icon + two-line block as the hours */
 .d-batt .gl { font-size: 19px; flex: none; }
+/* an old reading (mouse asleep or off) steps back */
+.d-batt.is-stale { opacity: .5; }
 .d-batt.is-low b, .d-batt.is-low .gl { color: #ff7a6b; }
 [data-bar="light"][data-glass="none"] .d-batt.is-low b, [data-bar="light"][data-glass="none"] .d-batt.is-low .gl { color: #c8321f; }
 .pill.is-dock:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) .d-bsep { display: block; }

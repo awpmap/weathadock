@@ -81,6 +81,8 @@ body { background: var(--glass-detail); }
 .card-h .gl { font-size: 14px; margin-right: 6px; }
 .card-h a, .link { color: var(--accent); font-weight: 600; font-size: 12px; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; border-radius: 4px; }
 .link:hover { color: #a9d7ff; }
+.set-link { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; display: inline; }
+.set-link[hidden] { display: none; }
 .link .gl { font-size: 12px; }
 button.card { display: block; width: 100%; text-align: left; transition: background 0.15s var(--ease); }
 button.card:hover, .card.is-link:hover { background: var(--fill-2); }

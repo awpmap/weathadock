@@ -32,29 +32,49 @@ pub struct Snapshot {
     pub coverage: f64,
     pub desktop_foreground: bool,
     pub foreground_is_ours: bool,
-    /// A game, video or presentation has the whole screen.
-    pub fullscreen: bool,
+    /// The monitor a game or video is filling, if any. `ALL_MONITORS` during a presentation.
+    pub fullscreen: Option<isize>,
 }
 
-/// Whether something is using the whole screen, so nothing of ours should sit on top of it.
+/// Stands for every monitor in `Snapshot::fullscreen`.
+pub const ALL_MONITORS: isize = 0;
+
+/// The monitor a window is on, as a value to compare with `Snapshot::fullscreen`.
+pub fn monitor_of(h: Handle) -> isize {
+    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+    unsafe { MonitorFromWindow(hwnd(h), MONITOR_DEFAULTTONEAREST).0 as isize }
+}
+
+/// Whether `fullscreen` (from a snapshot) means the monitor this window is on is taken.
+pub fn fullscreen_on(fullscreen: Option<isize>, h: Handle) -> bool {
+    fullscreen.is_some_and(|monitor| monitor == ALL_MONITORS || monitor == monitor_of(h))
+}
+
+/// Which monitor something is using the whole of, so nothing of ours sits on top of it there.
+/// Only that monitor counts: a game on one screen leaves the weather on another alone.
 /// Asks Windows first (the same signal it uses to hold back notifications during games and
 /// presentations), then checks whether the window in use covers its entire monitor, which
 /// catches borderless-window games and full-screen video.
-fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> bool {
+fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> Option<isize> {
     use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows::Win32::UI::Shell::{SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN};
     unsafe {
-        if let Ok(state) = SHQueryUserNotificationState() {
-            if state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE || (state == QUNS_BUSY && !desktop && !ours) {
-                return true;
-            }
+        let state = SHQueryUserNotificationState().ok();
+        if state == Some(QUNS_PRESENTATION_MODE) {
+            return Some(ALL_MONITORS); // a setting for the whole PC, not one window
         }
         if fg.0.is_null() || desktop || ours {
-            return false;
+            return None;
+        }
+        // Windows reports a game or other full-screen app without saying where it is; it is
+        // on the monitor of the window in use.
+        let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        if state == Some(QUNS_RUNNING_D3D_FULL_SCREEN) || state == Some(QUNS_BUSY) {
+            return Some(monitor.0 as isize);
         }
         let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-        if !GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
-            return false;
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
         }
         let m = info.rcMonitor;
         // Either measure of the window covering the monitor counts.
@@ -62,6 +82,7 @@ fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> bool {
             .into_iter()
             .flatten()
             .any(|r| r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom)
+            .then_some(monitor.0 as isize)
     }
 }
 

@@ -930,12 +930,14 @@ fn tick(app: &AppHandle) {
     let covered = c.covered;
     // A widget kept above other windows steps back while a game, video or presentation has the
     // whole screen, and returns afterwards.
-    if snap.fullscreen != c.fullscreen {
-        c.fullscreen = snap.fullscreen;
-        trace(format!("fullscreen -> {}", snap.fullscreen));
+    // Only the monitor each window is on matters: a game on another screen changes nothing.
+    let widget_fullscreen = win32::fullscreen_on(snap.fullscreen, handle);
+    if widget_fullscreen != c.fullscreen {
+        c.fullscreen = widget_fullscreen;
+        trace(format!("fullscreen on the widget's monitor -> {widget_fullscreen}"));
         if widget_on && on_top {
-            let _ = widget.set_always_on_top(!snap.fullscreen);
-            if snap.fullscreen {
+            let _ = widget.set_always_on_top(!widget_fullscreen);
+            if widget_fullscreen {
                 win32::send_to_bottom(handle);
             }
         }
@@ -943,7 +945,7 @@ fn tick(app: &AppHandle) {
     drop(c);
 
     let Some(pill) = window(app, "pill") else { return };
-    let fullscreen = snap.fullscreen;
+    let fullscreen = win32::handle_of(&pill).is_some_and(|h| win32::fullscreen_on(snap.fullscreen, h));
     let show = covered && !fullscreen;
     set_pill_visible(app, show);
     if show {

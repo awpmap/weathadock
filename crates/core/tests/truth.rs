@@ -1,7 +1,7 @@
 //! What the app shows must never contradict itself, must follow the clock, and must survive
 //! whatever the services send. Each test here is one of those promises.
 use serde_json::{json, Value};
-use weathadock_core::weather::{advance, alert_notice, alerts_to_announce, build_state, feels_like, icon_from_text, NwsData};
+use weathadock_core::weather::{advance, alert_notice, alerts_to_announce, build_state, feels_like, icon_from_text, with_alerts, NwsData};
 
 const HOUR: i64 = 3_600_000;
 const OFFSET: i64 = -6 * HOUR; // Central Standard Time
@@ -363,7 +363,13 @@ fn alerts_are_ordered_and_say_when_they_could_not_be_checked() {
     assert_eq!(s["alerts"][0]["replaces"], json!(["u1", "https://api.weather.gov/alerts/u1"]));
     assert_eq!(s["sources"], json!({ "nws": true, "openMeteo": true, "alerts": true }));
 
-    // The alerts call failed: keep what was known, minus what has ended since, and say so.
+    // The alerts call failed a few minutes later: what was known still counts as checked.
+    let soon = NOW + 5 * 60_000;
+    let without = NwsData { alerts: None, ..nws(soon) };
+    let kept = build_state(&place(), Some(&without), Some(&open_meteo(soon)), soon, &s).unwrap();
+    assert_eq!((kept["alerts"].as_array().unwrap().len(), kept["sources"]["alerts"].as_bool(), &kept["alertsAt"]), (3, Some(true), &s["updatedAt"]));
+    assert_eq!(advance(&kept, soon + 16 * 60_000).unwrap()["sources"]["alerts"], false, "but not for ever");
+    // Two hours of failures: keep what was known, minus what has ended since, and say so.
     let later = NOW + 2 * HOUR;
     let without_alerts = NwsData { alerts: None, ..nws(later) };
     let kept = build_state(&place(), Some(&without_alerts), Some(&open_meteo(later)), later, &s).unwrap();
@@ -377,6 +383,14 @@ fn alerts_are_ordered_and_say_when_they_could_not_be_checked() {
     assert_eq!(s["alerts"][0]["id"], "x");
     assert_eq!(s["error"], "National Weather Service did not respond. Showing what is available.");
     assert!(build_state(&place(), Some(&only_alerts), None, NOW, &Value::Null).is_none(), "alerts alone are not a forecast");
+
+    // Between refreshes only the alerts are asked for, and put into the forecast already shown.
+    let quiet = state(Some(&nws(NOW)), Some(&o), NOW);
+    let warned = with_alerts(&quiet, &[alert("t", "Tornado Warning", "Extreme", NOW + HOUR)], NOW + 4 * 60_000);
+    assert_eq!((warned["alerts"][0]["event"].as_str(), warned["alertsAt"].as_str()), (Some("Tornado Warning"), Some("2026-11-18T20:11:00.000Z")));
+    assert_eq!((&warned["hourly"], &warned["updatedAt"]), (&quiet["hourly"], &quiet["updatedAt"]));
+    let loading = weathadock_core::weather::empty_state("loading", None, None);
+    assert_eq!(with_alerts(&loading, &[], NOW), loading);
 }
 
 #[test]

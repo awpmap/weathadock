@@ -125,6 +125,13 @@ pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
     out
 }
 
+/// A stored place is usable only with a 5-digit zip and real coordinates.
+fn valid_place(place: &Value) -> bool {
+    let zip = place["zip"].as_str().unwrap_or("");
+    let within = |key: &str, limit: f64| place[key].as_f64().is_some_and(|v| v.abs() <= limit);
+    zip.len() == 5 && zip.bytes().all(|b| b.is_ascii_digit()) && within("lat", 90.0) && within("lon", 180.0)
+}
+
 /// Merge a stored settings file over the defaults and bring older formats up to date.
 pub fn load(stored: Option<Value>) -> Value {
     let mut data = defaults();
@@ -144,6 +151,12 @@ pub fn load(stored: Option<Value>) -> Value {
         }
         data["glass"] = json!("none");
         data["coveredMode"] = json!("tray");
+    }
+    // A place without coordinates would be looked up at latitude 0, longitude 0 and shown
+    // under the city's name. Without any usable place the app asks for one again.
+    if let Some(list) = data["locations"].as_array_mut() {
+        list.retain(valid_place);
+        list.truncate(12);
     }
     if let Some(o) = data.as_object_mut() {
         o.remove("location");
@@ -223,6 +236,21 @@ mod tests {
         assert_eq!(d["widget"]["size"], "medium");
         assert_eq!(d["widget"]["show"]["daily"], false);
         assert!(d["widget"]["show"].get("evil").is_none());
+    }
+
+    #[test]
+    fn keeps_only_places_that_can_be_looked_up() {
+        let place = |zip: Value, lat: Value, lon: Value| json!({ "zip": zip, "city": "Springfield", "state": "IL", "lat": lat, "lon": lon });
+        let d = load(Some(json!({ "activeZip": "00000", "notifiedAlerts": [{ "id": "a", "event": "Wind Advisory", "severity": "Minor" }, "b"], "locations": [
+            place(json!("62701"), json!(39.8), json!(-89.65)), place(json!("62702"), json!(null), json!(-89.6)), place(json!("627"), json!(39.8), json!(-89.6)),
+            place(json!(62703), json!(39.8), json!(-89.6)), place(json!("62704"), json!("39.8"), json!(-89.6)), place(json!("62705"), json!(239.8), json!(-89.6)),
+            json!("62706"), json!(null),
+        ] })));
+        assert_eq!(public_locations(&d)["locations"], json!([{ "zip": "62701", "city": "Springfield", "state": "IL" }]));
+        assert_eq!(active_zip(&d).as_deref(), Some("62701"));
+        assert_eq!(d["notifiedAlerts"].as_array().map(Vec::len), Some(2), "the record of announced alerts is kept as written");
+        let none = load(Some(json!({ "locations": [place(json!("62702"), json!(null), json!(null))] })));
+        assert!(active_location(&none).is_none(), "with no usable place the app asks for one again");
     }
 
     #[test]

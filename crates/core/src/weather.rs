@@ -624,6 +624,13 @@ fn build_daily(nws: Option<&NwsData>, om: Option<&Value>, now: i64, offset: i32,
     (days, kept)
 }
 
+/// How long after the last successful check the alerts shown still count as checked.
+const ALERTS_CHECKED_MS: i64 = 20 * 60_000;
+
+fn alerts_checked(at: &Value, now: i64) -> bool {
+    at.as_str().and_then(parse_ms).map_or(false, |t| now - t < ALERTS_CHECKED_MS)
+}
+
 fn alert_over(alert: &Value, now: i64) -> bool {
     time_of(alert, "ends").or(time_of(alert, "expires")).map_or(false, |end| end <= now)
 }
@@ -791,10 +798,11 @@ pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, now: 
     if let Some(o) = location.as_object_mut() {
         o.insert("timeZone".into(), json!(time_zone));
     }
-    let fresh_alerts = nws.and_then(|n| n.alerts.as_ref());
-    let alerts = match fresh_alerts {
-        Some(features) => build_alerts(features, now),
-        None => previous["alerts"].as_array().into_iter().flatten().filter(|a| !alert_over(a, now)).cloned().collect(),
+    // When the alerts call failed, what was known is kept (minus what has ended since) together
+    // with the time it was learned, so the windows can say when alerts could not be checked.
+    let (alerts, alerts_at) = match nws.and_then(|n| n.alerts.as_ref()) {
+        Some(features) => (build_alerts(features, now), json!(iso(now))),
+        None => (previous["alerts"].as_array().into_iter().flatten().filter(|a| !alert_over(a, now)).cloned().collect(), previous["alertsAt"].clone()),
     };
     Some(json!({
         "status": "ok",
@@ -802,7 +810,7 @@ pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, now: 
         "stale": false,
         "updatedAt": iso(now),
         "utcOffset": offset,
-        "sources": { "nws": forecast.is_some(), "openMeteo": om.is_some(), "alerts": fresh_alerts.is_some() },
+        "sources": { "nws": forecast.is_some(), "openMeteo": om.is_some(), "alerts": alerts_checked(&alerts_at, now) },
         "location": location,
         "current": current,
         "today": today,
@@ -811,8 +819,21 @@ pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, now: 
         "hourly": hourly,
         "daily": daily,
         "alerts": alerts,
+        "alertsAt": alerts_at,
         "nwsHigh": nws_high,
     }))
+}
+
+/// The same state with the answer of an alerts-only check put in: alerts are asked for more
+/// often than the forecast, because a warning should not wait for the next refresh.
+pub fn with_alerts(state: &Value, features: &[Value], now: i64) -> Value {
+    let mut next = state.clone();
+    if next["status"] == "ok" {
+        next["alerts"] = json!(build_alerts(features, now));
+        next["alertsAt"] = json!(iso(now));
+        next["sources"]["alerts"] = json!(true);
+    }
+    next
 }
 
 /// Bring a state built earlier up to `now` without new data, so the display follows the clock
@@ -869,6 +890,7 @@ pub fn advance(state: &Value, now: i64) -> Option<Value> {
     next["hourly"] = json!(hourly);
     next["daily"] = json!(daily);
     next["alerts"] = json!(alerts);
+    next["sources"]["alerts"] = json!(alerts_checked(&state["alertsAt"], now));
     (next != *state).then_some(next)
 }
 

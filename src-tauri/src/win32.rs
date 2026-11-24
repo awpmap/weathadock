@@ -8,8 +8,8 @@ use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, GetClassNameW, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowLongW,
     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GW_HWNDNEXT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GWL_EXSTYLE, GWL_STYLE, GW_HWNDNEXT, GW_OWNER, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 pub type Handle = isize;
@@ -74,6 +74,11 @@ fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> Option<isize> {
         }
         let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
+        }
+        // A window with a title bar that fills its monitor is maximized on a screen that has
+        // no taskbar, not full screen.
+        if (GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION.0) == WS_CAPTION.0 {
             return None;
         }
         let m = info.rcMonitor;
@@ -198,6 +203,30 @@ pub fn keep_on_top(h: Handle) {
     unsafe {
         let _ = SetWindowPos(hwnd(h), Some(HWND_TOPMOST), 0, 0, 0, 0, KEEP);
     }
+}
+/// Put a window above all others, or back among the ordinary ones, without taking focus.
+pub fn set_topmost(h: Handle, on: bool) {
+    unsafe {
+        let _ = SetWindowPos(hwnd(h), Some(if on { HWND_TOPMOST } else { HWND_NOTOPMOST }), 0, 0, 0, 0, KEEP);
+    }
+}
+/// How many ordinary app windows are open: the ones that get a taskbar button. Quick to
+/// count, and a change means the taskbar is about to move its buttons.
+pub fn app_window_count() -> u32 {
+    let mut count = 0;
+    unsafe {
+        let mut h = GetTopWindow(None).unwrap_or_default();
+        let mut guard = 0;
+        while !h.0.is_null() && guard < 4000 {
+            guard += 1;
+            let tool = GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
+            if IsWindowVisible(h).as_bool() && !tool && GetWindow(h, GW_OWNER).map_or(true, |owner| owner.0.is_null()) {
+                count += 1;
+            }
+            h = GetWindow(h, GW_HWNDNEXT).unwrap_or_default();
+        }
+    }
+    count
 }
 /// Bring to the front of the normal windows without taking focus or staying always-on-top.
 pub fn raise(h: Handle) {

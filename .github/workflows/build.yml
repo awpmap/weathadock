@@ -47,7 +47,7 @@ jobs:
       - run: npm ci
       # Fails when Cargo.lock does not match the manifests, so a build never picks versions
       # other than the ones that were tested.
-      - run: cargo fetch --locked
+      - run: cargo fetch --locked --target x86_64-pc-windows-msvc
       - run: cargo test -p weathadock-core --locked
       - run: npm run build
       - name: Collect installer

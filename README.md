@@ -22,9 +22,14 @@ The first run asks for a US zip code. No account or API key is needed.
 
 | Source | Used for |
 |---|---|
-| [National Weather Service](https://www.weather.gov/documentation/services-web-api) (api.weather.gov) | Forecast highs and lows, hourly forecast, forecast text, official alerts |
-| [Open-Meteo](https://open-meteo.com/) | Current conditions, 15-minute precipitation timing, UV, sunrise and sunset |
+| [National Weather Service](https://www.weather.gov/documentation/services-web-api) (api.weather.gov) | Current conditions measured at the nearest official station, forecast highs and lows, hourly forecast, forecast text, official alerts |
+| [Open-Meteo](https://open-meteo.com/) | Sky conditions, 15-minute precipitation timing, UV, sunrise and sunset; current conditions where no station is close by |
 | [Zippopotam.us](https://api.zippopotam.us/) | Zip code to coordinates (Open-Meteo geocoding as a fallback) |
+
+The temperature, humidity, wind, pressure and visibility shown for "now" are measured ones
+whenever an official station (an airport's, as a rule) stands within 25 km of the place, at about
+the same height, and has reported in the last 90 minutes. The app says which station and when.
+Without such a station they are Open-Meteo's modelled values.
 
 If one weather source is down the app keeps working with the other. Alerts are checked every two
 minutes, and the app says so when they could not be checked instead of showing "no alerts".

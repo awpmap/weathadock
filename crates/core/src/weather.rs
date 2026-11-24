@@ -17,6 +17,8 @@ pub struct NwsData {
     pub daily: Vec<Value>,
     pub hourly: Vec<Value>,
     pub alerts: Option<Vec<Value>>,
+    /// How high the forecast's grid square lies, in metres.
+    pub elevation: Option<f64>,
 }
 
 // ---------------------------------------------------------------- helpers
@@ -95,6 +97,11 @@ fn c_to_f(v: &Value) -> Value {
 fn round_to(n: f64, places: i32) -> f64 {
     let m = 10f64.powi(places);
     (n * m).round() / m
+}
+/// Visibility the way it is shown: tenths of a mile up to ten miles, whole miles beyond.
+fn miles_shown(miles: f64) -> Value {
+    let m = round_to(miles, 1);
+    json!(if m > 10.0 { m.round() } else { m })
 }
 
 // ---------------------------------------------------------------- weather codes
@@ -670,15 +677,232 @@ fn build_alerts(features: &[Value], now: i64) -> Vec<Value> {
     out
 }
 
-fn build_current(om: Option<&Value>, hourly: &[Value], om_hour: Option<usize>) -> Value {
+// ---------------------------------------------------------------- station readings
+
+/// How far from a place an official station may stand and still speak for it (kilometres),
+/// how much higher or lower (metres: about 2°F of difference in the air), and how old its
+/// report may be. Most stations report once an hour, so one report stays in use until the
+/// next has had half an hour to arrive.
+const STATION_KM: f64 = 25.0;
+const STATION_RISE_M: f64 = 150.0;
+const REPORT_MS: i64 = 90 * 60_000;
+
+/// An official observing station near a place.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Station {
+    pub id: String,
+    pub name: String,
+    /// How far from the place it stands, in kilometres.
+    pub km: f64,
+    /// How high it stands, in metres, where the service says.
+    pub elevation: Option<f64>,
+}
+
+impl Station {
+    /// Whether the station stands about as high as the place does. Air cools with height, so
+    /// a station up the mountain does not speak for the valley, however near it is.
+    pub fn level_with(&self, ground: Option<f64>) -> bool {
+        match (self.elevation, ground) {
+            (Some(station), Some(ground)) => (station - ground).abs() <= STATION_RISE_M,
+            _ => true,
+        }
+    }
+}
+
+/// The wind a station measured: speed and gust in mph, the direction it blows from in degrees.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Wind {
+    pub speed: f64,
+    pub from: Option<f64>,
+    pub gust: Option<f64>,
+}
+
+/// A station's report in the units the app shows: °F, mph, inches of mercury and miles.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reading {
+    pub station: Station,
+    /// When the station took it, in milliseconds.
+    pub at: i64,
+    pub temp: f64,
+    pub dew: Option<f64>,
+    pub wind: Option<Wind>,
+    pub pressure: Option<f64>,
+    pub visibility: Option<f64>,
+}
+
+/// How high a place lies, in metres: Open-Meteo says it for the exact spot, the Weather
+/// Service for the grid square of its forecast.
+pub fn ground_elevation(nws: Option<&NwsData>, om: Option<&Value>) -> Option<f64> {
+    om.and_then(|o| num(&o["elevation"])).or_else(|| nws.and_then(|n| n.elevation))
+}
+
+/// Airports and the other official sites report under a four-character identifier ("KMDW").
+/// The volunteer, roadside and school stations the service also lists do not, and they are
+/// left out: nobody vouches for where their thermometers hang.
+fn official(id: &str) -> bool {
+    id.len() == 4 && id.starts_with(|c: char| c.is_ascii_uppercase()) && id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+fn km_between(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let (lat_a, lat_b) = (a.0.to_radians(), b.0.to_radians());
+    let half = |d: f64| (d.to_radians() / 2.0).sin().powi(2);
+    let h = half(b.0 - a.0) + lat_a.cos() * lat_b.cos() * half(b.1 - a.1);
+    2.0 * 6371.0 * h.sqrt().min(1.0).asin()
+}
+
+/// The official stations within reach of a place, nearest first, out of the Weather Service's
+/// list of the stations around it.
+pub fn nearby_stations(list: &Value, lat: f64, lon: f64) -> Vec<Station> {
+    let mut out: Vec<Station> = Vec::new();
+    for f in list["features"].as_array().into_iter().flatten() {
+        let p = &f["properties"];
+        let Some(id) = p["stationIdentifier"].as_str().filter(|id| official(id)) else { continue };
+        let spot = &f["geometry"]["coordinates"];
+        let (Some(station_lon), Some(station_lat)) = (num(&spot[0]), num(&spot[1])) else { continue };
+        let km = km_between((lat, lon), (station_lat, station_lon));
+        if km.is_nan() || km > STATION_KM || out.iter().any(|s| s.id == id) {
+            continue;
+        }
+        let name = p["name"].as_str().map(|n| n.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|n| !n.is_empty());
+        let elevation = num(&p["elevation"]["value"]).filter(|_| unit_of(&p["elevation"]) == Some("m"));
+        out.push(Station { id: id.to_string(), name: name.unwrap_or_else(|| id.to_string()), km, elevation });
+    }
+    out.sort_by(|a, b| a.km.total_cmp(&b.km));
+    out
+}
+
+/// "wmoUnit:degC" -> "degC"
+fn unit_of(v: &Value) -> Option<&str> {
+    v["unitCode"].as_str()?.rsplit(':').next()
+}
+
+/// One value of a station report, converted by `to`. `None` when it is missing, when the
+/// service's own quality control turned it down (X), questioned it (Q) or a person marked it
+/// bad (B), or when it comes in a unit this code does not know: better no value than a wrong one.
+fn measured(v: &Value, to: fn(&str, f64) -> Option<f64>) -> Option<f64> {
+    if matches!(v["qualityControl"].as_str(), Some("X" | "Q" | "B")) {
+        return None;
+    }
+    to(unit_of(v)?, num(&v["value"])?)
+}
+fn to_fahrenheit(unit: &str, v: f64) -> Option<f64> {
+    let f = match unit {
+        "degC" => v * 9.0 / 5.0 + 32.0,
+        "degF" => v,
+        _ => return None,
+    };
+    (-100.0..=140.0).contains(&f).then_some(f)
+}
+fn to_mph(unit: &str, v: f64) -> Option<f64> {
+    let mph = match unit {
+        "km_h-1" => v / 1.609344,
+        "m_s-1" => v * 2.236936,
+        _ => return None,
+    };
+    (0.0..=250.0).contains(&mph).then_some(mph)
+}
+fn to_inches_of_mercury(unit: &str, v: f64) -> Option<f64> {
+    (unit == "Pa").then_some(v * 0.0002953).filter(|p| (25.0..=32.5).contains(p))
+}
+fn to_miles(unit: &str, v: f64) -> Option<f64> {
+    (unit == "m").then_some(v / 1609.344).filter(|miles| *miles >= 0.0)
+}
+fn to_degrees(unit: &str, v: f64) -> Option<f64> {
+    (unit == "degree_(angle)").then_some(v).filter(|d| (0.0..=360.0).contains(d))
+}
+
+/// Relative humidity in percent from the temperature and the dew point, both in °F.
+fn relative_humidity(temp: f64, dew: f64) -> f64 {
+    let vapour = |f: f64| {
+        let c = (f - 32.0) / 1.8;
+        (17.625 * c / (243.04 + c)).exp()
+    };
+    (100.0 * vapour(dew) / vapour(temp)).clamp(0.0, 100.0)
+}
+
+/// Read a station's latest report. `Err` says in a few words why it cannot stand for "now":
+/// it is too old, or it carries no temperature.
+pub fn read_station(report: &Value, station: &Station, now: i64) -> Result<Reading, String> {
+    let p = &report["properties"];
+    let at = time_of(p, "timestamp").ok_or("its report carries no time")?;
+    let age = now.saturating_sub(at);
+    if age > REPORT_MS {
+        return Err(if age < 100 * DAY_MS { format!("its report is {} minutes old", age / 60_000) } else { "its report is very old".into() });
+    }
+    if age < -10 * 60_000 {
+        return Err("its report is dated in the future".into());
+    }
+    let temp = measured(&p["temperature"], to_fahrenheit).ok_or("its report has no temperature")?;
+    Ok(Reading {
+        station: station.clone(),
+        at: at.min(now),
+        temp,
+        // Dew never forms above the air temperature; a tenth of a degree over is rounding.
+        dew: measured(&p["dewpoint"], to_fahrenheit).map(|d| d.min(temp)),
+        wind: measured(&p["windSpeed"], to_mph).map(|speed| Wind {
+            speed,
+            from: measured(&p["windDirection"], to_degrees),
+            gust: measured(&p["windGust"], to_mph),
+        }),
+        pressure: measured(&p["barometricPressure"], to_inches_of_mercury),
+        visibility: measured(&p["visibility"], to_miles),
+    })
+}
+
+/// Put what a station measured in place of what the model worked out: the air (temperature
+/// and dew point, and the humidity that follows from those two), the wind as one set, the
+/// pressure and the visibility. Whatever the station left out stays, kept in step with what it
+/// did report. The sky words, the picture and the UV index stay as they are: the words must
+/// agree with the source that times the rain, and a station does not.
+fn measure(current: &mut Value, r: &Reading) {
+    let whole = |n: f64| json!(n.round() as i64);
+    current["temp"] = whole(r.temp);
+    if let Some(dew) = r.dew.or(num(&current["dewPoint"])).map(|d| d.min(r.temp)) {
+        current["dewPoint"] = whole(dew);
+        current["humidity"] = whole(relative_humidity(r.temp, dew));
+    }
+    let mut wind = num(&current["windSpeed"]);
+    if let Some(w) = &r.wind {
+        let calm = w.speed.round() < 1.0;
+        current["windSpeed"] = whole(w.speed);
+        current["windDir"] = w.from.filter(|_| !calm).map_or(Value::Null, |d| compass(&json!(d)));
+        current["windGust"] = w.gust.map_or(Value::Null, whole);
+        wind = Some(w.speed);
+    }
+    current["feelsLike"] = feels(Some(r.temp), wind, num(&current["humidity"]));
+    if let Some(p) = r.pressure {
+        current["pressure"] = json!(round_to(p, 2));
+    }
+    if let Some(v) = r.visibility {
+        // Stations report quarter and sixteenth miles in fog; those are shown as reported.
+        let miles = round_to(v, 2);
+        current["visibility"] = json!(if miles > 10.0 { miles.round() } else { miles });
+    }
+    current["observedAt"] = json!(iso(r.at));
+    current["station"] = json!({ "id": r.station.id, "name": r.station.name, "miles": round_to(r.station.km / 1.609344, 1) });
+}
+
+// ---------------------------------------------------------------- the state
+
+/// The conditions right now: a station's report where there is one, laid over the model's.
+fn build_current(om: Option<&Value>, hourly: &[Value], om_hour: Option<usize>, reading: Option<&Reading>) -> Value {
+    let mut current = modelled_current(om, hourly, om_hour);
+    if let Some(r) = reading.filter(|_| current.is_object()) {
+        measure(&mut current, r);
+    }
+    current
+}
+
+/// Open-Meteo's account of the present quarter of an hour, or the forecast for this hour when
+/// Open-Meteo did not answer.
+fn modelled_current(om: Option<&Value>, hourly: &[Value], om_hour: Option<usize>) -> Value {
     let h0 = hourly.first();
     if let Some((om, c)) = om.and_then(|o| Some((o, o.get("current")?))).filter(|(_, c)| num(&c["temperature_2m"]).is_some()) {
         let oh = &om["hourly"];
         let mut visibility = Value::Null;
         if let Some(v) = om_hour.and_then(|i| num(&at(oh, "visibility", i))) {
             let feet = om["hourly_units"]["visibility"].as_str() == Some("ft");
-            let miles = round_to(v / if feet { 5280.0 } else { 1609.344 }, 1);
-            visibility = json!(if miles > 10.0 { miles.round() } else { miles });
+            visibility = miles_shown(v / if feet { 5280.0 } else { 1609.344 });
         }
         // The picture and the words beside it describe the same reading.
         let (icon, words) = wmo(code_of(&c["weather_code"]));
@@ -697,6 +921,7 @@ fn build_current(om: Option<&Value>, hourly: &[Value], om_hour: Option<usize>) -
             "pressure": opt(num(&c["pressure_msl"]).map(|p| round_to(p * 0.02953, 2))),
             "visibility": visibility,
             "uvIndex": om_hour.map(|i| round(&at(oh, "uv_index", i))).unwrap_or(Value::Null),
+            "observedAt": null, "station": null,
         });
     }
     match h0 {
@@ -704,6 +929,7 @@ fn build_current(om: Option<&Value>, hourly: &[Value], om_hour: Option<usize>) -
             "temp": h["temp"], "feelsLike": h["feelsLike"], "condition": h["condition"], "icon": h["icon"],
             "isDay": h["isDay"], "humidity": h["humidity"], "dewPoint": h["dewPoint"], "windSpeed": h["windSpeed"],
             "windGust": null, "windDir": h["windDir"], "pressure": null, "visibility": null, "uvIndex": null,
+            "observedAt": null, "station": null,
         }),
         None => Value::Null,
     }
@@ -743,10 +969,11 @@ fn today_of(day: Option<&Value>, summary: &str) -> Value {
 }
 
 /// Build the `WeatherState` for a place. Returns `None` when neither forecast source answered.
-/// `loc` is `{ zip, city, state, lat, lon }`. `previous` is the state built last time for the
-/// same place (or null): its alerts are kept when the alerts call failed, and so is the high
-/// the Weather Service gave for today.
-pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, now: i64, previous: &Value) -> Option<Value> {
+/// `loc` is `{ zip, city, state, lat, lon }`. `reading` is the report of a nearby station, when
+/// one is close and fresh enough to stand for "now" (see `read_station`). `previous` is the
+/// state built last time for the same place (or null): its alerts are kept when the alerts call
+/// failed, and so is the high the Weather Service gave for today.
+pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, reading: Option<&Reading>, now: i64, previous: &Value) -> Option<Value> {
     // The alerts call stands on its own: it can succeed when the forecast calls did not.
     let forecast = nws.filter(|n| !n.daily.is_empty() || !n.hourly.is_empty());
     if forecast.is_none() && om.is_none() {
@@ -764,7 +991,7 @@ pub fn build_state(loc: &Value, nws: Option<&NwsData>, om: Option<&Value>, now: 
         let key = now.div_euclid(HOUR_MS) * 3600;
         o["hourly"]["time"].as_array()?.iter().position(|t| num(t).map(|n| n as i64) == Some(key))
     });
-    let current = build_current(om, &hourly, om_hour);
+    let current = build_current(om, &hourly, om_hour, reading);
     for h in &mut hourly {
         if let Some(o) = h.as_object_mut() {
             o.remove("dewPoint");
@@ -861,6 +1088,12 @@ pub fn advance(state: &Value, now: i64) -> Option<Value> {
             }
             for key in READING_KEYS {
                 current[key] = Value::Null;
+            }
+            // A forecast is not a measurement: the station is no longer named beside it.
+            for key in ["observedAt", "station"] {
+                if !current[key].is_null() {
+                    current[key] = Value::Null;
+                }
             }
         }
     }

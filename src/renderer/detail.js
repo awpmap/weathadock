@@ -233,6 +233,18 @@
       (sub ? '<div class="inc-sub">' + esc(sub) + '</div>' : '') + body + '</div>';
   }
 
+  /* where and when "now" was measured, when a station's report is behind the numbers */
+  function measuredLine(c, zone) {
+    if (!c.station || !c.observedAt) return '';
+    /* the time first: a long station name is cut short before the time is */
+    var text = 'Measured ' + U.when(c.observedAt, zone, new Date(U.now(state)).toISOString()) + ' at ' + c.station.name;
+    return '<div class="ov-src" title="' + esc(text) + '">' + esc(text) + '</div>';
+  }
+  function away(miles) {
+    var n = Math.round(miles);
+    return n < 1 ? 'less than a mile away' : n === 1 ? '1 mile away' : n + ' miles away';
+  }
+
   function renderOverview() {
     var s = state, c = s.current, t = s.today || {}, zone = tz();
     var html = '';
@@ -243,7 +255,8 @@
     }
     html += '<div class="ov-hero"><div><div class="ov-temp">' + (c.temp == null ? '–' : U.whole(c.temp) + '<sup>°</sup>') + '</div>' +
       '<div class="ov-cond">' + esc(c.condition || '') + '</div>' +
-      '<div class="ov-meta"><span>High <b>' + U.deg(t.high) + '</b></span><span>Low <b>' + U.deg(t.low) + '</b></span>' + (c.feelsLike != null ? '<i></i><span>Feels like <b>' + U.deg(c.feelsLike) + '</b></span>' : '') + '</div></div>' +
+      '<div class="ov-meta"><span>High <b>' + U.deg(t.high) + '</b></span><span>Low <b>' + U.deg(t.low) + '</b></span>' + (c.feelsLike != null ? '<i></i><span>Feels like <b>' + U.deg(c.feelsLike) + '</b></span>' : '') + '</div>' +
+      measuredLine(c, zone) + '</div>' +
       '<div class="ov-icon">' + I.wx(c.icon, c.isDay, { animated: true }) + '</div>' +
       (t.summary ? '<p class="ov-sum">' + esc(t.summary) + '</p>' : '') + '</div>';
 
@@ -707,6 +720,11 @@
     $('set-updated').textContent = upd;
     var src = (s && s.sources) || {};
     var known = !!(s && s.updatedAt);
+    /* which station is behind "now", or that none is: the line above it promises one */
+    var cur = s && s.status === 'ok' && !s.stale && s.current;
+    var where = !cur ? '' : cur.station ? 'Now measured at ' + cur.station.name + ', ' + away(cur.station.miles) + '.' : 'No official station close by has a recent report right now.';
+    $('src-station').hidden = !where;
+    $('src-station').textContent = where;
     [['src-nws', src.nws], ['src-om', src.openMeteo]].forEach(function (p) {
       $(p[0]).className = 'src-dot' + (known ? (p[1] ? ' is-on' : ' is-off') : '');
       $(p[0] + '-tx').textContent = known ? (p[1] ? (p[0] === 'src-nws' && src.alerts === false ? 'Alerts not checked' : 'Connected') : 'No response') : '';

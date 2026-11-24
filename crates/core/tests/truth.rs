@@ -1,7 +1,9 @@
 //! What the app shows must never contradict itself, must follow the clock, and must survive
 //! whatever the services send. Each test here is one of those promises.
 use serde_json::{json, Value};
-use weathadock_core::weather::{advance, alert_notice, alerts_to_announce, build_state, feels_like, icon_from_text, with_alerts, NwsData};
+use weathadock_core::weather::{
+    advance, alert_notice, alerts_to_announce, build_state, feels_like, ground_elevation, icon_from_text, nearby_stations, read_station, with_alerts, NwsData, Station,
+};
 
 const HOUR: i64 = 3_600_000;
 const OFFSET: i64 = -6 * HOUR; // Central Standard Time
@@ -71,6 +73,7 @@ fn nws(now: i64) -> NwsData {
         ],
         hourly: nws_hours(now, "Sunny", 5),
         alerts: Some(vec![]),
+        elevation: Some(181.0),
     }
 }
 
@@ -80,7 +83,7 @@ fn alert(id: &str, event: &str, severity: &str, ends: i64) -> Value {
 }
 
 fn state(nws: Option<&NwsData>, om: Option<&Value>, now: i64) -> Value {
-    build_state(&place(), nws, om, now, &Value::Null).expect("a state")
+    build_state(&place(), nws, om, None, now, &Value::Null).expect("a state")
 }
 
 fn assert_now_row_matches(s: &Value) {
@@ -268,13 +271,13 @@ fn the_evening_keeps_the_high_the_day_was_given() {
     let mut om = open_meteo(evening);
     om["daily"]["temperature_2m_max"] = json!(vec![52.0; 8]);
     om["current"]["temperature_2m"] = json!(45.0);
-    let with_memory = build_state(&place(), Some(&later), Some(&om), evening, &afternoon).unwrap();
+    let with_memory = build_state(&place(), Some(&later), Some(&om), None, evening, &afternoon).unwrap();
     assert_eq!((with_memory["today"]["high"].as_i64(), with_memory["today"]["low"].as_i64()), (Some(57), Some(41)));
     assert_eq!(with_memory["nwsHigh"], afternoon["nwsHigh"], "and it is remembered for the rest of the evening");
-    assert_eq!(build_state(&place(), Some(&later), Some(&om), evening, &Value::Null).unwrap()["today"]["high"], 52);
+    assert_eq!(build_state(&place(), Some(&later), Some(&om), None, evening, &Value::Null).unwrap()["today"]["high"], 52);
     // The next day it is forgotten.
     let tomorrow = NOW + 29 * HOUR;
-    let s = build_state(&place(), None, Some(&open_meteo(tomorrow)), tomorrow, &afternoon).unwrap();
+    let s = build_state(&place(), None, Some(&open_meteo(tomorrow)), None, tomorrow, &afternoon).unwrap();
     assert_eq!(s["today"]["high"], 57); // Open-Meteo's own figure, not a memory
     assert!(s["nwsHigh"].is_null());
 }
@@ -366,23 +369,23 @@ fn alerts_are_ordered_and_say_when_they_could_not_be_checked() {
     // The alerts call failed a few minutes later: what was known still counts as checked.
     let soon = NOW + 5 * 60_000;
     let without = NwsData { alerts: None, ..nws(soon) };
-    let kept = build_state(&place(), Some(&without), Some(&open_meteo(soon)), soon, &s).unwrap();
+    let kept = build_state(&place(), Some(&without), Some(&open_meteo(soon)), None, soon, &s).unwrap();
     assert_eq!((kept["alerts"].as_array().unwrap().len(), kept["sources"]["alerts"].as_bool(), &kept["alertsAt"]), (3, Some(true), &s["updatedAt"]));
     assert_eq!(advance(&kept, soon + 16 * 60_000).unwrap()["sources"]["alerts"], false, "but not for ever");
     // Two hours of failures: keep what was known, minus what has ended since, and say so.
     let later = NOW + 2 * HOUR;
     let without_alerts = NwsData { alerts: None, ..nws(later) };
-    let kept = build_state(&place(), Some(&without_alerts), Some(&open_meteo(later)), later, &s).unwrap();
+    let kept = build_state(&place(), Some(&without_alerts), Some(&open_meteo(later)), None, later, &s).unwrap();
     assert_eq!(kept["alerts"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect::<Vec<_>>(), ["w", "m"]);
     assert_eq!(kept["sources"]["alerts"], false);
 
     // The forecast calls failed but the alerts call worked: alerts still arrive.
-    let only_alerts = NwsData { time_zone: None, daily: vec![], hourly: vec![], alerts: Some(vec![alert("x", "Wind Advisory", "Minor", NOW + HOUR)]) };
+    let only_alerts = NwsData { alerts: Some(vec![alert("x", "Wind Advisory", "Minor", NOW + HOUR)]), ..NwsData::default() };
     let s = state(Some(&only_alerts), Some(&o), NOW);
     assert_eq!(s["sources"], json!({ "nws": false, "openMeteo": true, "alerts": true }));
     assert_eq!(s["alerts"][0]["id"], "x");
     assert_eq!(s["error"], "National Weather Service did not respond. Showing what is available.");
-    assert!(build_state(&place(), Some(&only_alerts), None, NOW, &Value::Null).is_none(), "alerts alone are not a forecast");
+    assert!(build_state(&place(), Some(&only_alerts), None, None, NOW, &Value::Null).is_none(), "alerts alone are not a forecast");
 
     // Between refreshes only the alerts are asked for, and put into the forecast already shown.
     let quiet = state(Some(&nws(NOW)), Some(&o), NOW);
@@ -442,6 +445,245 @@ fn a_notification_says_what_and_until_when() {
     assert_eq!(alert_notice(&json!({}), "Chicago, IL", NOW, -21600).0, "Weather Alert");
 }
 
+// ---------------------------------------------------------------- measured where a station is near
+
+/// The Weather Service's list of the stations around downtown Chicago, in the shape it sends
+/// it: O'Hare airport just out of reach, a volunteer's station next door, Midway 16 km away.
+fn station_list() -> Value {
+    let station = |id: &str, name: &str, lon: f64, lat: f64, metres: f64| {
+        json!({ "type": "Feature", "geometry": { "type": "Point", "coordinates": [lon, lat] },
+            "properties": { "@type": "wx:ObservationStation", "stationIdentifier": id, "name": name, "timeZone": "America/Chicago",
+                "elevation": { "unitCode": "wmoUnit:m", "value": metres } } })
+    };
+    json!({ "type": "FeatureCollection", "features": [
+        station("KORD", "Chicago, Chicago-O'Hare International Airport", -87.9047, 41.9786, 204.0),
+        station("E1234", "EW1234 Chicago", -87.62, 41.89, 182.0),
+        station("KMDW", "Chicago, Chicago Midway Airport", -87.7522, 41.7861, 188.0),
+    ] })
+}
+
+fn midway() -> Station {
+    nearby_stations(&station_list(), 41.8858, -87.6181).remove(0)
+}
+
+fn value(unit: &str, value: Value, checked: &str) -> Value {
+    json!({ "unitCode": format!("wmoUnit:{unit}"), "value": value, "qualityControl": checked })
+}
+
+/// A station report in the shape the Weather Service sends it: 3.9°C with a dew point of
+/// 1.1°C, wind from 250° at 16.56 km/h without gusts, 101,660 Pa, and ten miles of visibility.
+fn report(taken: i64) -> Value {
+    let time = chrono::DateTime::from_timestamp_millis(taken).unwrap().format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+    json!({ "type": "Feature", "properties": { "station": "https://api.weather.gov/stations/KMDW", "timestamp": time, "textDescription": "Light Rain",
+        "temperature": value("degC", json!(3.9), "V"), "dewpoint": value("degC", json!(1.1), "V"),
+        "windDirection": value("degree_(angle)", json!(250), "V"), "windSpeed": value("km_h-1", json!(16.56), "V"), "windGust": value("km_h-1", json!(null), "Z"),
+        "barometricPressure": value("Pa", json!(101660), "V"), "seaLevelPressure": value("Pa", json!(101690), "V"),
+        "visibility": value("m", json!(16093.44), "C"), "relativeHumidity": value("percent", json!(81.9), "V") } })
+}
+
+/// The state with the given report, taken 14 minutes ago, laid over the usual two answers.
+fn measured(report: &Value) -> Value {
+    let reading = read_station(report, &midway(), NOW).expect("a usable report");
+    build_state(&place(), Some(&nws(NOW)), Some(&open_meteo(NOW)), Some(&reading), NOW, &Value::Null).unwrap()
+}
+
+#[test]
+fn now_is_measured_where_an_official_station_is_near() {
+    let near = nearby_stations(&station_list(), 41.8858, -87.6181);
+    assert_eq!(near.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["KMDW"], "not the volunteer's station next door, not the airport 26 km away");
+    assert!((near[0].km - 15.7).abs() < 0.3, "{} km", near[0].km);
+
+    let s = measured(&report(NOW - 14 * 60_000));
+    let c = &s["current"];
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(34), Some(82)));
+    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].as_str(), c["windGust"].is_null()), (Some(10), Some("WSW"), true));
+    assert_eq!((c["pressure"].as_f64(), c["visibility"].as_f64()), (Some(30.02), Some(10.0)));
+    assert_eq!(c["feelsLike"], 32, "wind chill from the measured temperature and the measured wind");
+    assert_eq!(c["feelsLike"], feels_like(39.02, Some(16.56 / 1.609344), Some(82.0)).round() as i64);
+    assert_eq!((c["observedAt"].as_str(), c["station"]["id"].as_str(), c["station"]["name"].as_str()), (Some("2026-11-18T19:53:00.000Z"), Some("KMDW"), Some("Chicago, Chicago Midway Airport")));
+    assert_eq!(c["station"]["miles"], 9.8);
+
+    // Everything else on screen follows the measured temperature.
+    assert_now_row_matches(&s);
+    assert_eq!((s["today"]["high"].as_i64(), s["today"]["low"].as_i64()), (Some(57), Some(39)), "the day's range contains what is measured now");
+    assert_eq!(advance(&s, NOW), None);
+    assert_eq!(s["sources"], json!({ "nws": true, "openMeteo": true, "alerts": true }));
+}
+
+#[test]
+fn the_sky_words_stay_with_the_source_that_times_the_rain() {
+    // The station said "Light Rain" 14 minutes ago; the 15-minute steps say it is dry. Only one
+    // of the two is shown, so the words can never argue with the rain heads-up beside them.
+    let (modelled, s) = (state(Some(&nws(NOW)), Some(&open_meteo(NOW)), NOW), measured(&report(NOW - 14 * 60_000)));
+    for key in ["condition", "icon", "isDay", "uvIndex"] {
+        assert_eq!(s["current"][key], modelled["current"][key], "{key}");
+    }
+    for key in ["nextPrecip", "minutely", "alerts", "location", "nwsHigh"] {
+        assert_eq!(s[key], modelled[key], "{key}");
+    }
+    assert_eq!(s["hourly"][1], modelled["hourly"][1], "the hours ahead are the forecast's, as before");
+    assert!(modelled["current"]["observedAt"].is_null() && modelled["current"]["station"].is_null(), "nothing is called measured without a station");
+}
+
+#[test]
+fn a_report_stands_for_now_only_while_it_is_fresh() {
+    let station = midway();
+    // Most stations report once an hour: one report stays until the next has had half an hour to arrive.
+    assert!(read_station(&report(NOW - 90 * 60_000), &station, NOW).is_ok());
+    assert_eq!(read_station(&report(NOW - 91 * 60_000), &station, NOW).unwrap_err(), "its report is 91 minutes old");
+    assert!(read_station(&report(NOW - 400 * 24 * HOUR), &station, NOW).is_err());
+    // A PC whose clock runs a few minutes behind is fine; a report from tomorrow is not.
+    assert_eq!(read_station(&report(NOW + 3 * 60_000), &station, NOW).unwrap().at, NOW);
+    assert!(read_station(&report(NOW + 11 * 60_000), &station, NOW).is_err());
+    let mut undated = report(NOW);
+    undated["properties"]["timestamp"] = json!(null);
+    assert!(read_station(&undated, &station, NOW).is_err());
+
+    // Ninety minutes without news and the forecast for the hour takes over, as it always has.
+    // From then on nothing on screen is called measured.
+    let s = measured(&report(NOW - 14 * 60_000));
+    let later = advance(&s, NOW + 40 * 60_000).unwrap();
+    assert_eq!((later["current"]["temp"].as_i64(), later["current"]["observedAt"].as_str()), (Some(39), Some("2026-11-18T19:53:00.000Z")));
+    let later = advance(&s, NOW + 91 * 60_000).unwrap();
+    assert_eq!(later["current"]["temp"], 54);
+    assert!(later["current"]["observedAt"].is_null() && later["current"]["station"].is_null() && later["current"]["pressure"].is_null());
+    assert_now_row_matches(&later);
+}
+
+#[test]
+fn a_value_the_service_turned_down_is_not_shown() {
+    let station = midway();
+    // X: failed the service's quality control. Q: questioned. B: marked bad by a person.
+    for flag in ["X", "Q", "B"] {
+        let mut r = report(NOW);
+        r["properties"]["temperature"]["qualityControl"] = json!(flag);
+        assert_eq!(read_station(&r, &station, NOW).unwrap_err(), "its report has no temperature", "{flag}");
+        let mut r = report(NOW);
+        for key in ["dewpoint", "windSpeed", "barometricPressure", "visibility"] {
+            r["properties"][key]["qualityControl"] = json!(flag);
+        }
+        let reading = read_station(&r, &station, NOW).unwrap();
+        assert!(reading.dew.is_none() && reading.wind.is_none() && reading.pressure.is_none() && reading.visibility.is_none(), "{flag}");
+    }
+    // Verified, screened, passed a coarse check, or not checked yet: taken, within what is physically possible.
+    for flag in ["V", "S", "C", "G", "Z"] {
+        let mut r = report(NOW);
+        r["properties"]["temperature"]["qualityControl"] = json!(flag);
+        assert!(read_station(&r, &station, NOW).is_ok(), "{flag}");
+    }
+    for (key, absurd) in [("temperature", 99.0), ("windSpeed", 900.0), ("windSpeed", -4.0), ("barometricPressure", 10_166.0), ("visibility", -1.0), ("windDirection", 720.0)] {
+        let mut r = report(NOW);
+        r["properties"][key]["value"] = json!(absurd);
+        match read_station(&r, &station, NOW) {
+            Err(why) => assert_eq!((key, why.as_str()), ("temperature", "its report has no temperature")),
+            Ok(reading) => assert!(
+                match key {
+                    "windSpeed" => reading.wind.is_none(),
+                    "windDirection" => reading.wind.unwrap().from.is_none(),
+                    "barometricPressure" => reading.pressure.is_none(),
+                    _ => reading.visibility.is_none(),
+                },
+                "{key} {absurd}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn a_unit_this_app_does_not_know_is_never_guessed() {
+    let station = midway();
+    // The service used to send the wind in metres per second: 4.6 m/s is 10 mph too.
+    let mut r = report(NOW);
+    r["properties"]["windSpeed"] = json!({ "unitCode": "unit:m_s-1", "value": 4.6, "qualityControl": "V" });
+    assert_eq!(read_station(&r, &station, NOW).unwrap().wind.unwrap().speed.round(), 10.0);
+    r["properties"]["windSpeed"] = value("kn", json!(9), "V");
+    r["properties"]["barometricPressure"] = value("hPa", json!(1016.6), "V");
+    r["properties"]["visibility"] = value("km", json!(16), "V");
+    r["properties"]["dewpoint"] = value("K", json!(274.2), "V");
+    let reading = read_station(&r, &station, NOW).unwrap();
+    assert!(reading.wind.is_none() && reading.pressure.is_none() && reading.visibility.is_none() && reading.dew.is_none());
+    r["properties"]["temperature"] = value("K", json!(277.0), "V");
+    assert!(read_station(&r, &station, NOW).is_err());
+    r["properties"]["temperature"] = value("degF", json!(39.0), "V");
+    assert_eq!(read_station(&r, &station, NOW).unwrap().temp, 39.0);
+}
+
+#[test]
+fn what_a_station_leaves_out_stays_in_step_with_what_it_reports() {
+    // No dew point from the station: the model's stays (31°F), and the humidity is the one
+    // that follows from the measured temperature and that dew point, not the model's 40%.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["dewpoint"]["value"] = json!(null);
+    let c = measured(&r)["current"].clone();
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(31), Some(73)));
+    // A modelled dew point above the measured temperature would be fog that is not there.
+    let mut o = open_meteo(NOW);
+    o["hourly"]["dew_point_2m"] = json!(vec![45.0; 72]);
+    let reading = read_station(&r, &midway(), NOW).unwrap();
+    let c = build_state(&place(), Some(&nws(NOW)), Some(&o), Some(&reading), NOW, &Value::Null).unwrap()["current"].clone();
+    assert_eq!((c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(100)));
+    // The same when the station itself reports a dew point a hair above its temperature.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["dewpoint"]["value"] = json!(4.0);
+    let c = measured(&r)["current"].clone();
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(39), Some(100)));
+
+    // No wind from the station: the model's wind stays as one set (speed, direction and gusts),
+    // and the wind chill is worked out from the measured temperature and that wind.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["windSpeed"]["value"] = json!(null);
+    let c = measured(&r)["current"].clone();
+    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].as_str(), c["windGust"].as_i64()), (Some(6), Some("W"), Some(12)));
+    assert_eq!(c["feelsLike"], feels_like(39.02, Some(6.0), None).round() as i64);
+    // Calm air comes from nowhere and chills nothing.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["windSpeed"]["value"] = json!(0);
+    r["properties"]["windDirection"]["value"] = json!(0);
+    let c = measured(&r)["current"].clone();
+    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].is_null(), c["windGust"].is_null(), c["feelsLike"].as_i64()), (Some(0), true, true, Some(39)));
+    // Gusts are reported only when there are any.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["windGust"] = value("km_h-1", json!(40.7), "V");
+    assert_eq!(measured(&r)["current"]["windGust"], 25);
+
+    // No pressure or visibility from the station: the model's stay.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["barometricPressure"]["value"] = json!(null);
+    r["properties"]["visibility"]["value"] = json!(null);
+    let c = measured(&r)["current"].clone();
+    assert_eq!((c["pressure"].as_f64(), c["visibility"].as_f64()), (Some(30.0), Some(10.0)));
+    // Fog at the station: a quarter of a mile is shown as a quarter of a mile, not as 0.3.
+    for (metres, miles) in [(402.336, 0.25), (2816.352, 1.75), (4828.032, 3.0), (16093.44, 10.0), (24140.16, 15.0)] {
+        let mut r = report(NOW - 14 * 60_000);
+        r["properties"]["visibility"]["value"] = json!(metres);
+        assert_eq!(measured(&r)["current"]["visibility"], miles);
+    }
+
+    // Without Open-Meteo the station is laid over the forecast for the hour instead.
+    let reading = read_station(&report(NOW - 14 * 60_000), &midway(), NOW).unwrap();
+    let s = build_state(&place(), Some(&nws(NOW)), None, Some(&reading), NOW, &Value::Null).unwrap();
+    assert_eq!((s["current"]["temp"].as_i64(), s["current"]["condition"].as_str(), s["current"]["uvIndex"].is_null()), (Some(39), Some("Sunny"), true));
+    assert_now_row_matches(&s);
+}
+
+#[test]
+fn a_station_up_the_mountain_does_not_speak_for_the_valley() {
+    let station = |metres: Option<f64>| Station { id: "KXYZ".into(), name: "Pass".into(), km: 9.0, elevation: metres };
+    // Air cools about 2°F for every 150 m of height.
+    assert!(station(Some(1740.0)).level_with(Some(1650.0)));
+    assert!(!station(Some(2400.0)).level_with(Some(1650.0)));
+    assert!(!station(Some(1650.0)).level_with(Some(1801.0)));
+    assert!(station(None).level_with(Some(1650.0)) && station(Some(1650.0)).level_with(None), "unknown heights rule nothing out");
+    // Open-Meteo says how high the exact spot lies; the Weather Service knows its grid square.
+    assert_eq!(ground_elevation(Some(&nws(NOW)), Some(&json!({ "elevation": 179.0 }))), Some(179.0));
+    assert_eq!(ground_elevation(Some(&nws(NOW)), Some(&json!({}))), Some(181.0));
+    assert_eq!(ground_elevation(None, None), None);
+    // A height given in feet is not read as metres.
+    let mut list = station_list();
+    list["features"][2]["properties"]["elevation"] = json!({ "unitCode": "wmoUnit:ft", "value": 617 });
+    assert_eq!(nearby_stations(&list, 41.8858, -87.6181)[0].elevation, None);
+}
+
 // ---------------------------------------------------------------- whatever the services send
 
 #[test]
@@ -459,17 +701,17 @@ fn nothing_the_services_send_can_crash_the_merge() {
             for key in keys {
                 let mut o = good.1.clone();
                 o[block][key.as_str()] = if o[block][key.as_str()].is_array() && !j.is_array() { json!(vec![j.clone(); 72]) } else { j.clone() };
-                let s = build_state(&place(), Some(&good.0), Some(&o), NOW, j);
+                let s = build_state(&place(), Some(&good.0), Some(&o), None, NOW, j);
                 built += usize::from(s.as_ref().map_or(false, |s| advance(s, NOW + 5 * HOUR).is_some()));
-                let _ = build_state(&place(), None, Some(&o), NOW, &Value::Null).map(|s| advance(&s, NOW + 30 * HOUR));
+                let _ = build_state(&place(), None, Some(&o), None, NOW, &Value::Null).map(|s| advance(&s, NOW + 30 * HOUR));
             }
             let mut o = good.1.clone();
             o[block] = j.clone();
-            let _ = build_state(&place(), None, Some(&o), NOW, &Value::Null).map(|s| advance(&s, NOW + HOUR));
+            let _ = build_state(&place(), None, Some(&o), None, NOW, &Value::Null).map(|s| advance(&s, NOW + HOUR));
         }
         let mut o = good.1.clone();
         o["utc_offset_seconds"] = j.clone();
-        let _ = build_state(&place(), Some(&good.0), Some(&o), NOW, &Value::Null);
+        let _ = build_state(&place(), Some(&good.0), Some(&o), None, NOW, &Value::Null);
         // Every field of the Weather Service periods, hours and alerts.
         for key in ["startTime", "endTime", "isDaytime", "temperature", "probabilityOfPrecipitation", "shortForecast", "detailedForecast", "windSpeed", "relativeHumidity"] {
             let mut n = good.0.clone();
@@ -478,7 +720,7 @@ fn nothing_the_services_send_can_crash_the_merge() {
             }
             n.alerts = Some(vec![j.clone(), json!({ "properties": j }), json!({ "properties": { "status": "Actual", "id": j, "event": j, "ends": j, "onset": j, "references": j, "severity": j } })]);
             for om in [Some(&good.1), None] {
-                if let Some(s) = build_state(&place(), Some(&n), om, NOW, &Value::Null) {
+                if let Some(s) = build_state(&place(), Some(&n), om, None, NOW, &Value::Null) {
                     let _ = advance(&s, NOW + 7 * HOUR);
                     let list = s["alerts"].as_array().unwrap();
                     let _ = alerts_to_announce(list, &junk);
@@ -489,8 +731,32 @@ fn nothing_the_services_send_can_crash_the_merge() {
             }
         }
         let _ = (alert_notice(j, "", NOW, i32::MAX), alerts_to_announce(&junk, &junk), advance(j, NOW), icon_from_text(j.as_str().unwrap_or("")));
+        // The station list and the station's report, whole and field by field.
+        let station = midway();
+        let lists = [j.clone(), json!({ "features": j }), json!({ "features": [j, { "properties": j, "geometry": j },
+            { "properties": { "stationIdentifier": "KMDW", "name": j, "elevation": j }, "geometry": { "coordinates": [j, j] } },
+            { "properties": { "stationIdentifier": j, "name": "x", "elevation": { "unitCode": j, "value": j } }, "geometry": { "coordinates": j } }] })];
+        for list in &lists {
+            for (lat, lon) in [(41.8858, -87.6181), (f64::MAX, f64::MIN), (0.0, 0.0)] {
+                assert!(nearby_stations(list, lat, lon).len() <= 1);
+            }
+        }
+        let _ = (read_station(j, &station, NOW), read_station(&json!({ "properties": j }), &station, NOW), ground_elevation(None, Some(j)));
+        for key in ["timestamp", "temperature", "dewpoint", "windDirection", "windSpeed", "windGust", "barometricPressure", "visibility"] {
+            for damaged in [j.clone(), json!({ "unitCode": j, "value": 3.9, "qualityControl": "V" }), json!({ "unitCode": "wmoUnit:degC", "value": j, "qualityControl": j })] {
+                let mut r = report(NOW - 14 * 60_000);
+                r["properties"][key] = damaged;
+                for now in [NOW, i64::MAX, i64::MIN, 0] {
+                    if let Ok(reading) = read_station(&r, &station, now) {
+                        let s = build_state(&place(), Some(&good.0), Some(&good.1), Some(&reading), NOW, &Value::Null).unwrap();
+                        assert_now_row_matches(&s);
+                        let _ = advance(&s, NOW + 2 * HOUR);
+                    }
+                }
+            }
+        }
         for now in [0, -1, 4_102_444_800_000, -62_000_000_000_000] {
-            let _ = build_state(&place(), Some(&good.0), Some(&good.1), now, j).map(|s| advance(&s, now));
+            let _ = build_state(&place(), Some(&good.0), Some(&good.1), None, now, j).map(|s| advance(&s, now));
             let _ = advance(&state(Some(&good.0), Some(&good.1), NOW), now);
         }
     }

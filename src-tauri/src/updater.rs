@@ -43,6 +43,18 @@ fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
+/// Deletes the installers kept from earlier updates, and nothing else. One that is still
+/// running cannot be deleted and is left for the next check.
+async fn clear_old_installers(dir: &std::path::Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else { return };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with("weathadock-") && name.ends_with("-setup.exe") {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+}
+
 impl Updater {
     pub fn public(&self, app: &AppHandle) -> Value {
         let s = self.state.lock().unwrap().clone();
@@ -83,6 +95,11 @@ impl Updater {
     }
 
     async fn run(&self, app: &AppHandle) -> Result<(), String> {
+        // No installer is waiting to be run at this point, so whatever is in the folder has
+        // already been installed or was never used. Each one is several megabytes.
+        if let Ok(cache) = app.path().app_cache_dir() {
+            clear_old_installers(&cache.join("updates")).await;
+        }
         let net = app.state::<crate::net::Net>();
         let release: Value = net
             .client()

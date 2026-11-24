@@ -1251,10 +1251,9 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
 }
 
 fn set_active(app: &AppHandle, zip: &str) {
-    let Some(loc) = settings_snapshot(app)["locations"].as_array().into_iter().flatten().find(|l| l["zip"] == zip).cloned() else {
+    if !settings_snapshot(app)["locations"].as_array().into_iter().flatten().any(|l| l["zip"] == zip) {
         return;
-    };
-    let _ = loc;
+    }
     store(app, |d| d["activeZip"] = json!(zip));
     // Show what is already known for this place straight away, then fetch fresh data.
     let st = shared(app);

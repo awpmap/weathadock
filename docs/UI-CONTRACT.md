@@ -329,3 +329,47 @@ chooses what the strip shows; patch it as a whole object. The pill drops hours, 
 
 `Settings.mouseBattery: boolean` (default off). `sky.getBattery()` / `sky.onBattery(cb)` give
 `{ tier: 'good'|'mid'|'low'|'urgent', label, charging, low, urgent, stale, age } | null` (bands instead of a percentage since 1.1.14: good above 50, mid 21 to 50, low 8 to 20, urgent below 8) (`stale` with `age` text such as "12 min ago" once the mouse has not answered for three minutes; `sky.getBatteryLog()` gives the last checks as copyable text), read from a Logitech wireless mouse over HID++ (see `hidpp.rs`).
+
+## Revision 7: a state that follows the clock
+
+Main now works out what is shown from the data it fetched last and the present time, so no page
+has to age anything itself. `crates/core/tests/truth.rs` holds these rules as tests.
+
+Additions to `WeatherState` (everything else keeps its shape):
+
+```ts
+  utcOffset: number                      // the place's UTC offset, in seconds
+  sources: { nws: boolean, openMeteo: boolean, alerts: boolean }   // alerts: checked successfully within the last 20 minutes
+  alertsAt: string | null                // ISO, the last successful alerts check
+  nwsHigh: { date: string, value: number } | null   // for main only: the Weather Service's high for today
+  // nextPrecip gains:
+  chance: number | null                  // set when the heads-up rests on the hourly chance of precipitation
+  // each alert gains:
+  replaces: string[]                     // ids of the messages this alert takes the place of
+```
+
+What main guarantees, and what the pages must keep to:
+
+- **One source for each thing shown.** `current` is Open-Meteo's reading (the forecast for the
+  present hour when Open-Meteo is unavailable). Highs, lows, the hourly and daily rows and their
+  words are the Weather Service's, and every `icon` is derived from the words beside it, so the
+  two cannot disagree. `feelsLike` is wind chill in the cold and heat index in the heat, as the
+  Weather Service works them out. After sunset "Sunny" reads "Clear".
+- **"Now" is `current`.** `hourly[0]` is the hour we are in and repeats `current` for temp,
+  feelsLike, icon, isDay, condition, wind and humidity. Label it "Now".
+- **Today's range contains now.** `today.high` and `today.low` always include `current.temp`.
+  After midnight the low is the low of the night in progress; the evening keeps the day's high.
+- **Rain timing.** `minutely` holds up to 12 hours (48 steps); charts draw the first 24. A lone
+  step with a trace counts as dry, so bars and headline agree. With nothing in the 15-minute data
+  but an hour the forecast calls likely wet, the headline reads "Rain likely around 5 PM (70%)"
+  with `chance` set and `isNow` false: show no minute counts for it.
+- **Time passing.** Between fetches main advances the state: hours that have passed drop off,
+  days roll over at local midnight, alerts that have ended disappear. After 90 minutes without
+  fresh data `current` takes the forecast for the present hour, and what only a reading can tell
+  (gust, pressure, visibility, UV index, dew point) becomes null. Show "Not reported" for those.
+- **Offline.** `stale` is set only when a refresh the person asked for failed, or the data is
+  older than two refresh intervals. Every layout then says from when: "Offline · 2:31 PM".
+- **Alerts.** They are checked every two minutes on their own. An alert ends at `ends`;
+  `expires` only says when that message is due to be replaced and is never shown as the end.
+  While `sources.alerts` is false, never say "No active alerts".
+- Detail window keyboard: Ctrl+1..6 follow the order of the sidebar.

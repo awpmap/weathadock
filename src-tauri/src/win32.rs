@@ -5,6 +5,7 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, GetClassNameW, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowLongW,
     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
@@ -297,23 +298,32 @@ pub fn taskbar_free_left() -> Option<(i32, i32)> {
     }
 }
 
+/// A number from the registry, when it is there.
+fn registry_number(root: HKEY, key: PCWSTR, name: PCWSTR) -> Option<u32> {
+    let mut value = 0u32;
+    let mut size = 4u32;
+    let read = unsafe { RegGetValueW(root, key, name, RRF_RT_REG_DWORD, None, Some(&mut value as *mut u32 as *mut core::ffi::c_void), Some(&mut size)) };
+    read.is_ok().then_some(value)
+}
+
 /// Whether Windows is set to a light taskbar ("Light" Windows mode).
 pub fn taskbar_is_light() -> bool {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-    let mut value = 1u32;
-    let mut size = 4u32;
-    unsafe {
-        let _ = RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("SystemUsesLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some(&mut value as *mut u32 as *mut core::ffi::c_void),
-            Some(&mut size),
-        )
-        .is_ok();
-    }
     // Windows is light unless the value says otherwise (a missing value means the default, light).
-    value == 1
+    registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("SystemUsesLightTheme")).map_or(true, |v| v == 1)
+}
+
+/// Whether the taskbar keeps its buttons in the middle: Windows 11, unless the person chose the
+/// left. Windows 10 has no such taskbar.
+pub fn taskbar_is_centered() -> bool {
+    windows_11() && registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"), w!("TaskbarAl")) != Some(0)
+}
+
+/// Windows 11 or newer, told by the build number.
+fn windows_11() -> bool {
+    let mut text = [0u16; 16];
+    let mut size = std::mem::size_of_val(&text) as u32;
+    let read = unsafe {
+        RegGetValueW(HKEY_LOCAL_MACHINE, w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"), w!("CurrentBuildNumber"), RRF_RT_REG_SZ, None, Some(text.as_mut_ptr() as *mut core::ffi::c_void), Some(&mut size))
+    };
+    read.is_ok() && String::from_utf16_lossy(&text).trim_end_matches('\0').parse::<u32>().is_ok_and(|build| build >= 22000)
 }

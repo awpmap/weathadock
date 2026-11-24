@@ -46,7 +46,7 @@ sky.windowControl(action: 'close'|'minimize'|'maximize'): void   // detail + set
 sky.moveBy(dx: number, dy: number): void                  // widget + pill: drag the window (screen px deltas)
 sky.dragEnd(): void                                       // persist position after a drag
 sky.setContentSize(width: number, height: number): void   // widget + pill: fit window to content (CSS px)
-sky.setTrayIcon(dataUrl: string): void                    // widget only, see below
+sky.setTrayIcon(dataUrl: string): void                    // widget, and the pill while docked; see below
 sky.quit(): void
 ```
 
@@ -71,12 +71,13 @@ Widget and pill call `sky.setContentSize(w, h)` after each render and when their
 (ResizeObserver on the root). Widget width is fixed at 380; only height varies. Do not
 animate the outer size.
 
-### Tray icon (widget.js)
-After each state update draw the current temperature (digits only, e.g. `72`, no degree sign
-if 3 chars) on a 64x64 canvas: bold white text filling the square, soft dark outline so it
-reads on light and dark taskbars; when there is an active alert add a small amber/red dot in
-the top-right corner. Call `sky.setTrayIcon(canvas.toDataURL('image/png'))`. If there is no
-temperature draw a simple cloud glyph.
+### Tray icon (`SkyUI.tray(state)` in common.js)
+Draws the current temperature (digits only, e.g. `72`, with a degree mark when there is room) in
+white on a sky-blue 64x64 tile, so the number reads as weather on light and dark taskbars; with
+an active alert it adds a dot in the alert's color in the top-right corner. Without a
+temperature it draws a simple cloud glyph. It calls `sky.setTrayIcon(canvas.toDataURL('image/png'))`
+when the picture changes. The widget calls it after each state update. Docked on the taskbar
+there is no widget, so the pill does; main decides when the tray shows the picture.
 
 ## Types
 
@@ -321,9 +322,13 @@ sky.showContextMenu(): void         // widget + pill: call on right-click (conte
 
 `Settings.placement = 'taskbar'` replaces the desktop widget with the pill window docked in the free
 space left of the Start button. `sky.getDock()` / `sky.onDock(cb)` give `{ room, light }`: the logical
-pixels available (0 when the taskbar has no free stretch, in which case the pill keeps its place by
-the tray) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
-chooses what the strip shows; patch it as a whole object. The pill drops hours, then the hint, then the words to fit.
+pixels available (0 when it cannot dock) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
+chooses what the strip shows; patch it as a whole object. To fit, the pill drops hours, then the hint,
+the words and the mouse battery, and at last shortens an alert's name down to its badge. The icon and
+the temperature always stay; main never docks it in less than 140 px. With less room than that: on a
+taskbar with left-aligned icons the pill keeps its place by the tray; on a centered taskbar (which
+then has no room by the tray either) main hides the pill and the tray icon shows the temperature
+until there is room again.
 
 ## Revision 6: mouse battery
 

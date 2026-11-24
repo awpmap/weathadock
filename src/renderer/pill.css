@@ -40,8 +40,9 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 .p-alert span { overflow: hidden; text-overflow: ellipsis; }
 .p-alert-ic { width: 16px; height: 16px; border-radius: 50%; background: var(--sev); color: #1a1206; display: grid; place-items: center; font-size: 11px; flex: none; text-shadow: none; }
 .p-alert-ic .gl { stroke-width: 2; vertical-align: 0; }
-.p-muted { font-size: 12px; color: var(--t2); display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
-.p-muted .gl { font-size: 13px; }
+.p-muted { font-size: 12px; color: var(--t2); display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; min-width: 0; }
+.p-muted span { overflow: hidden; text-overflow: ellipsis; }
+.p-muted .gl { font-size: 13px; flex: none; }
 
 /* transparent style: no capsule, just haloed content on the taskbar (alert badge keeps its fill) */
 [data-glass="none"] .pill, [data-glass="none"] .pill:hover { background: none; box-shadow: none; padding: 0 8px 0 4px; }
@@ -71,11 +72,14 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 .d-h { display: inline-flex; align-items: center; gap: 7px; }
 .pill.is-dock .d-h .wx { font-size: 20px; }
 [data-glass="none"] .d-tx span { color: rgba(255, 255, 255, 0.78); font-weight: 500; }
-/* not enough room: fewer hours (4, 2, none), then no hint, then no words */
+/* not enough room: fewer hours (4, 2, none), then no hint, no words, no mouse battery, and at
+   last an alert as its badge alone. The icon and the temperature always stay. */
 .pill.is-dock[data-fit="1"] .d-hours > .d-h:nth-child(n+5), .pill.is-dock[data-fit="2"] .d-hours > .d-h:nth-child(n+3) { display: none; }
-.pill.is-dock:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) :is(.d-hours, .p-sep) { display: none; }
-.pill.is-dock:is([data-fit="4"], [data-fit="5"]) .p-hint { display: none; }
-.pill.is-dock[data-fit="5"] > .d-tx { display: none; }
+.pill.is-dock:is([data-fit="3"], [data-fit="4"], [data-fit="5"], [data-fit="6"], [data-fit="7"]) :is(.d-hours, .p-sep) { display: none; }
+.pill.is-dock:is([data-fit="4"], [data-fit="5"], [data-fit="6"], [data-fit="7"]) .p-hint { display: none; }
+.pill.is-dock:is([data-fit="5"], [data-fit="6"], [data-fit="7"]) > .d-tx { display: none; }
+.pill.is-dock[data-fit="7"] .p-alert { padding: 0 3px; }
+.pill.is-dock[data-fit="7"] .p-alert span { display: none; }
 
 /* docked on a dark taskbar: the bar itself is the backdrop, so one soft shadow replaces the
    heavy halo that text over a wallpaper needs */
@@ -115,3 +119,4 @@ body { display: flex; align-items: center; text-shadow: 0 1px 2px rgba(0, 0, 0, 
 [data-bar="light"][data-glass="none"] .d-batt.is-low b, [data-bar="light"][data-glass="none"] .d-batt.is-low .gl { color: #9a5b00; }
 [data-bar="light"][data-glass="none"] .d-batt.is-urgent b, [data-bar="light"][data-glass="none"] .d-batt.is-urgent .gl { color: #c8321f; }
 .pill.is-dock:is([data-fit="3"], [data-fit="4"], [data-fit="5"]) .d-bsep { display: block; }
+.pill.is-dock:is([data-fit="6"], [data-fit="7"]) .d-batt { display: none; }

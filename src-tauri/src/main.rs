@@ -38,6 +38,9 @@ const TRAY_PLAIN: &[u8] = include_bytes!("../../build/tray.png");
 const SECTIONS: [&str; 6] = ["overview", "hourly", "daily", "alerts", "widget", "settings"];
 /// Between forecast refreshes the alerts alone are asked for this often.
 const ALERTS_EVERY_MS: i64 = 2 * 60_000;
+/// The narrowest free stretch of taskbar the docked strip still fits in (logical px): room for
+/// the icon, the temperature and an alert's badge.
+const DOCK_MIN: i32 = 140;
 
 struct Shared {
     dir: PathBuf,
@@ -76,6 +79,9 @@ struct Shared {
     battery_warned: Mutex<Option<weathadock_core::battery::Tier>>,
     /// Room for the docked taskbar strip in logical px (0 when it cannot dock), and whether the taskbar is light.
     dock: Mutex<(u32, bool)>,
+    /// Docked on a centered taskbar that has filled up: there is no room for the strip, so it
+    /// steps aside and the tray icon carries the temperature until room returns.
+    out_of_room: AtomicBool,
     taskbar_watch: Mutex<TaskbarWatch>,
     pending_section: Mutex<Option<String>>,
     covered: Mutex<Covered>,
@@ -115,6 +121,16 @@ fn settings_snapshot(app: &AppHandle) -> Value {
 /// The weather is docked on the taskbar instead of sitting on the desktop.
 fn docked(app: &AppHandle) -> bool {
     setting(app, "placement") == "taskbar"
+}
+/// The docked strip has stepped aside because the taskbar has no room for it.
+fn out_of_room(app: &AppHandle) -> bool {
+    docked(app) && shared(app).out_of_room.load(Ordering::Relaxed)
+}
+fn set_out_of_room(app: &AppHandle, on: bool) {
+    if shared(app).out_of_room.swap(on, Ordering::Relaxed) != on {
+        trace(format!("docked strip out of room -> {on}"));
+        apply_tray_image(app);
+    }
 }
 
 /// The desktop widget is switched on and not replaced by the taskbar dock.
@@ -706,12 +722,14 @@ fn update_tray(app: &AppHandle) {
 }
 
 /// Either/or: in "tray" mode the tray icon is the temperature; in "taskbar" mode the pill
-/// carries the weather and the tray shows the plain app glyph.
+/// carries the weather and the tray shows the plain app glyph. Docked, the strip carries it,
+/// and the tray icon steps in only while the taskbar has no room for the strip.
 fn apply_tray_image(app: &AppHandle) {
     let Some(tray) = app.tray_by_id("main") else { return };
     let number = shared(app).tray_number.lock().unwrap().clone();
     let bytes = match (setting(app, "coveredMode").as_str(), number) {
         (Some("tray"), Some(png)) if !docked(app) => png,
+        (_, Some(png)) if out_of_room(app) => png,
         _ => TRAY_PLAIN.to_vec(),
     };
     if let Ok(image) = tauri::image::Image::from_bytes(&bytes) {
@@ -879,18 +897,24 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
             let scale = window(app, "pill").and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
             let mut dock = (0u32, win32::taskbar_is_light());
             let mut spot = None;
+            let mut crowded = false;
             if docked(app) {
                 // Docked: the empty stretch left of the Start button on a centered taskbar.
                 let margin = (height as f64 * 0.25) as i32;
                 if let Some((left, right)) = win32::taskbar_free_left() {
                     let room = ((right - left - 2 * margin) as f64 / scale) as i32;
-                    if room >= 150 {
+                    if room >= DOCK_MIN {
                         dock.0 = room.min(900) as u32;
                         spot = Some((left + margin, bar.top, height));
+                    } else {
+                        // A centered taskbar fills from the middle outwards: with no room left of
+                        // Start there is none by the tray either, only app buttons to cover.
+                        crowded = win32::taskbar_is_centered();
                     }
                 }
             }
-            trace(format!("pill_geometry docked={} dock={dock:?} spot={spot:?} scale={scale}", docked(app)));
+            trace(format!("pill_geometry docked={} dock={dock:?} spot={spot:?} crowded={crowded} scale={scale}", docked(app)));
+            set_out_of_room(app, crowded);
             let changed = std::mem::replace(&mut *shared(app).dock.lock().unwrap(), dock) != dock;
             if changed {
                 let _ = app.emit("sky:dock", dock_info(app));
@@ -904,6 +928,7 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
         }
     }
     // No usable taskbar: float in the bottom-right corner of the work area instead.
+    set_out_of_room(app, false);
     let (ax, ay, aw, ah, scale) = work_area(app, None);
     let height = (44.0 * scale) as i32;
     (ax + aw - width - (16.0 * scale) as i32, ay + ah - height - (12.0 * scale) as i32, height)
@@ -915,6 +940,11 @@ fn place_pill(app: &AppHandle) {
     let width = st.sizes.lock().unwrap().get("pill").map(|s| s.0 as i32).unwrap_or(180);
     let (x, y, height) = pill_geometry(app, width);
     st.sizes.lock().unwrap().insert("pill".into(), (width as u32, height as u32));
+    if out_of_room(app) {
+        // Nowhere to put it: it waits out of sight until `follow_taskbar` finds room again.
+        hide_window(&w);
+        return;
+    }
     let room = st.dock.lock().unwrap().0;
     let (x, y, width) = if room > 0 {
         // The dock has one fixed home, and never reaches past the room the taskbar has for it.
@@ -978,7 +1008,9 @@ fn set_pill_visible(app: &AppHandle, visible: bool) {
     }
     if visible {
         place_pill(app);
-        show_inactive(&w);
+        if !out_of_room(app) {
+            show_inactive(&w);
+        }
     } else {
         hide_window(&w);
     }
@@ -1143,10 +1175,14 @@ fn tick(app: &AppHandle) {
     }
 
     let Some(pill) = pill else { return };
-    let show = covered && !win32::fullscreen_on(snap.fullscreen, pill);
+    let wanted = covered && !win32::fullscreen_on(snap.fullscreen, pill);
+    let show = wanted && !out_of_room(app);
     set_pill_visible(app, show);
     if show {
         win32::keep_on_top(pill); // the taskbar likes to climb back over it
+    }
+    if wanted {
+        // Also while the strip waits for room, which is how it learns that room has returned.
         follow_taskbar(app);
     }
 }
@@ -1236,6 +1272,10 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
         }
     }
     if changed("coveredMode") || changed("glass") || changed("placement") {
+        if changed("placement") {
+            // Whether there is room is measured afresh when the strip is placed.
+            shared(app).out_of_room.store(false, Ordering::Relaxed);
+        }
         apply_tray_image(app);
         off_main(app, |app| {
             std::thread::sleep(Duration::from_millis(200));
@@ -1508,7 +1548,8 @@ fn set_content_size(app: AppHandle, window: WebviewWindow, width: f64, height: f
 #[tauri::command]
 fn set_tray_icon(app: AppHandle, window: WebviewWindow, data_url: String) {
     use base64::Engine as _;
-    if window.label() != "widget" {
+    // The widget draws it. Docked, there is no widget and the strip's page does.
+    if window.label() != "widget" && window.label() != "pill" {
         return;
     }
     let Some(encoded) = data_url.strip_prefix("data:image/png;base64,") else { return };
@@ -1644,6 +1685,7 @@ fn main() {
                 sizes: Mutex::new(HashMap::new()),
                 tray_number: Mutex::new(None),
                 dock: Mutex::new((0, false)),
+                out_of_room: AtomicBool::new(false),
                 taskbar_watch: Mutex::new(TaskbarWatch::default()),
                 battery: Mutex::new(None),
                 battery_smooth: Mutex::new(Default::default()),

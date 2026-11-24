@@ -592,7 +592,7 @@
     $('battery-copy').hidden = !s.mouseBattery;
     var docked = s.placement === 'taskbar';
     $('placement-sub').textContent = docked
-      ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
+      ? 'Docked at the left end of the taskbar, best with centered icons. On a full taskbar the tray icon shows the temperature instead.'
       : 'A widget on your desktop.';
     document.querySelectorAll('[data-desktop-only]').forEach(function (r) { r.hidden = docked; });
     document.querySelectorAll('[data-taskbar-only]').forEach(function (r) { r.hidden = !docked; });

@@ -15,6 +15,10 @@
     '<linearGradient id="sk-rain" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9BD6FF"/><stop offset="1" stop-color="#3F9BFF"/></linearGradient>' +
     '<linearGradient id="sk-bolt" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE873"/><stop offset="1" stop-color="#FFA21A"/></linearGradient>' +
     '<linearGradient id="sk-wind" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/><stop offset="1" stop-color="#FFFFFF"/></linearGradient>' +
+    /* the white artwork in a grey-blue, for a light taskbar (see pill.css) */
+    '<linearGradient id="sk-moon-ink" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" stop-color="#C9D2F5"/><stop offset="1" stop-color="#8E9BD8"/></linearGradient>' +
+    '<linearGradient id="sk-cloud-ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E4EAF4"/><stop offset="1" stop-color="#A9B7CD"/></linearGradient>' +
+    '<linearGradient id="sk-cloud-back-ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#AEB9CB"/><stop offset="1" stop-color="#7F8CA3"/></linearGradient>' +
     '</defs></svg>';
 
   function ensureDefs() {

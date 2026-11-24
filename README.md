@@ -26,7 +26,8 @@ The first run asks for a US zip code. No account or API key is needed.
 | [Open-Meteo](https://open-meteo.com/) | Current conditions, 15-minute precipitation timing, UV, sunrise and sunset |
 | [Zippopotam.us](https://api.zippopotam.us/) | Zip code to coordinates (Open-Meteo geocoding as a fallback) |
 
-If one weather source is down the app keeps working with the other.
+If one weather source is down the app keeps working with the other. Alerts are checked every two
+minutes, and the app says so when they could not be checked instead of showing "no alerts".
 
 ## Run from source
 
@@ -43,8 +44,10 @@ npm run dev
 npm run build
 ```
 
-The installer is written to `target/release/bundle/nsis/`. The GitHub Actions workflow builds it on
-every push and publishes a release whenever `version` in `src-tauri/tauri.conf.json` changes.
+The installer is written to `target/release/bundle/nsis/`. The GitHub Actions workflow builds and
+smoke-tests it on every push and pull request. It publishes a release only from `main`, when the
+commit message contains `[release]` and the `version` in `src-tauri/tauri.conf.json` has no
+release yet.
 
 ## How it works
 
@@ -59,10 +62,27 @@ every push and publishes a release whenever `version` in `src-tauri/tauri.conf.j
 | `src/renderer/` | The screens: `widget`, `pill`, `detail`, `setup` |
 | `docs/UI-CONTRACT.md` | The data shape and API shared by both sides |
 
-Settings are stored in `%APPDATA%\app.weathadock.desktop\settings.json` and never leave your PC.
+## Your data
+
+Settings are stored in `%APPDATA%\app.weathadock.desktop\settings.json`. The file never leaves
+your PC, and there is no account, no analytics and no telemetry. To do its job the app sends:
+
+- the zip code you type, once, to the zip lookup service, to find its coordinates;
+- those coordinates to the National Weather Service and Open-Meteo at every refresh;
+- a request to GitHub for the latest release, when it checks for updates.
+
+The same folder holds what helps when something goes wrong: `settings.backup.json` (the last
+settings that loaded correctly, restored by the app itself if the main file is ever damaged; the
+damaged file is kept as `settings.damaged.json`) and `crash.log` (written only if the app stops
+unexpectedly). Like the settings, they stay on your PC.
 
 ## Tests
 
 ```
 cargo test -p weathadock-core
 ```
+
+`crates/core/tests/truth.rs` states the rules the weather on screen must obey (the "Now" column is
+the current reading, a picture never contradicts its words, and so on). `tests/snapshot.rs` compares
+whole results with recorded ones; after an intended change, record them again with
+`WEATHADOCK_BLESS=1 cargo test -p weathadock-core --test snapshot` and review the difference.

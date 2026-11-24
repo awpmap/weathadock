@@ -5,11 +5,12 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, GetClassNameW, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowLongW,
     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GW_HWNDNEXT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GWL_EXSTYLE, GWL_STYLE, GW_HWNDNEXT, GW_OWNER, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 pub type Handle = isize;
@@ -74,6 +75,11 @@ fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> Option<isize> {
         }
         let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
+        }
+        // A window with a title bar that fills its monitor is maximized on a screen that has
+        // no taskbar, not full screen.
+        if (GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION.0) == WS_CAPTION.0 {
             return None;
         }
         let m = info.rcMonitor;
@@ -199,6 +205,30 @@ pub fn keep_on_top(h: Handle) {
         let _ = SetWindowPos(hwnd(h), Some(HWND_TOPMOST), 0, 0, 0, 0, KEEP);
     }
 }
+/// Put a window above all others, or back among the ordinary ones, without taking focus.
+pub fn set_topmost(h: Handle, on: bool) {
+    unsafe {
+        let _ = SetWindowPos(hwnd(h), Some(if on { HWND_TOPMOST } else { HWND_NOTOPMOST }), 0, 0, 0, 0, KEEP);
+    }
+}
+/// How many ordinary app windows are open: the ones that get a taskbar button. Quick to
+/// count, and a change means the taskbar is about to move its buttons.
+pub fn app_window_count() -> u32 {
+    let mut count = 0;
+    unsafe {
+        let mut h = GetTopWindow(None).unwrap_or_default();
+        let mut guard = 0;
+        while !h.0.is_null() && guard < 4000 {
+            guard += 1;
+            let tool = GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
+            if IsWindowVisible(h).as_bool() && !tool && GetWindow(h, GW_OWNER).map_or(true, |owner| owner.0.is_null()) {
+                count += 1;
+            }
+            h = GetWindow(h, GW_HWNDNEXT).unwrap_or_default();
+        }
+    }
+    count
+}
 /// Bring to the front of the normal windows without taking focus or staying always-on-top.
 pub fn raise(h: Handle) {
     unsafe {
@@ -268,23 +298,32 @@ pub fn taskbar_free_left() -> Option<(i32, i32)> {
     }
 }
 
+/// A number from the registry, when it is there.
+fn registry_number(root: HKEY, key: PCWSTR, name: PCWSTR) -> Option<u32> {
+    let mut value = 0u32;
+    let mut size = 4u32;
+    let read = unsafe { RegGetValueW(root, key, name, RRF_RT_REG_DWORD, None, Some(&mut value as *mut u32 as *mut core::ffi::c_void), Some(&mut size)) };
+    read.is_ok().then_some(value)
+}
+
 /// Whether Windows is set to a light taskbar ("Light" Windows mode).
 pub fn taskbar_is_light() -> bool {
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
-    let mut value = 1u32;
-    let mut size = 4u32;
-    unsafe {
-        let _ = RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("SystemUsesLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some(&mut value as *mut u32 as *mut core::ffi::c_void),
-            Some(&mut size),
-        )
-        .is_ok();
-    }
     // Windows is light unless the value says otherwise (a missing value means the default, light).
-    value == 1
+    registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("SystemUsesLightTheme")).map_or(true, |v| v == 1)
+}
+
+/// Whether the taskbar keeps its buttons in the middle: Windows 11, unless the person chose the
+/// left. Windows 10 has no such taskbar.
+pub fn taskbar_is_centered() -> bool {
+    windows_11() && registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"), w!("TaskbarAl")) != Some(0)
+}
+
+/// Windows 11 or newer, told by the build number.
+fn windows_11() -> bool {
+    let mut text = [0u16; 16];
+    let mut size = std::mem::size_of_val(&text) as u32;
+    let read = unsafe {
+        RegGetValueW(HKEY_LOCAL_MACHINE, w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"), w!("CurrentBuildNumber"), RRF_RT_REG_SZ, None, Some(text.as_mut_ptr() as *mut core::ffi::c_void), Some(&mut size))
+    };
+    read.is_ok() && String::from_utf16_lossy(&text).trim_end_matches('\0').parse::<u32>().is_ok_and(|build| build >= 22000)
 }

@@ -43,6 +43,18 @@ fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
 }
 
+/// Deletes the installers kept from earlier updates, and nothing else. One that is still
+/// running cannot be deleted and is left for the next check.
+async fn clear_old_installers(dir: &std::path::Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else { return };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with("weathadock-") && name.ends_with("-setup.exe") {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+}
+
 impl Updater {
     pub fn public(&self, app: &AppHandle) -> Value {
         let s = self.state.lock().unwrap().clone();
@@ -83,6 +95,11 @@ impl Updater {
     }
 
     async fn run(&self, app: &AppHandle) -> Result<(), String> {
+        // No installer is waiting to be run at this point, so whatever is in the folder has
+        // already been installed or was never used. Each one is several megabytes.
+        if let Ok(cache) = app.path().app_cache_dir() {
+            clear_old_installers(&cache.join("updates")).await;
+        }
         let net = app.state::<crate::net::Net>();
         let release: Value = net
             .client()
@@ -90,12 +107,12 @@ impl Updater {
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
-            .map_err(|e| format!("Could not reach GitHub: {e}"))?
+            .map_err(|_| "Could not reach GitHub to check for updates.")?
             .error_for_status()
-            .map_err(|e| format!("GitHub answered with an error: {e}"))?
+            .map_err(|_| "GitHub did not answer the update check. Try again later.")?
             .json()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| "GitHub's answer to the update check could not be read.")?;
         let latest = release["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
         let current = app.package_info().version.to_string();
         if latest.is_empty() || version_parts(&latest) <= version_parts(&current) {
@@ -131,13 +148,13 @@ impl Updater {
             .timeout(std::time::Duration::from_secs(600))
             .send()
             .await
-            .map_err(|e| format!("Download failed: {e}"))?
+            .map_err(|_| "The update could not be downloaded. Try again later.")?
             .error_for_status()
-            .map_err(|e| format!("Download failed: {e}"))?;
+            .map_err(|_| "The update could not be downloaded. Try again later.")?;
         let mut bytes: Vec<u8> = Vec::with_capacity(total as usize);
         let mut hasher = Sha256::new();
         let mut shown = 0;
-        while let Some(chunk) = res.chunk().await.map_err(|e| format!("Download interrupted: {e}"))? {
+        while let Some(chunk) = res.chunk().await.map_err(|_| "The download was interrupted. Try again later.")? {
             hasher.update(&chunk);
             bytes.extend_from_slice(&chunk);
             if total > 0 {
@@ -158,10 +175,12 @@ impl Updater {
                 }
             }
         }
-        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("updates");
-        tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
+        // Messages shown in Settings are plain sentences: no library text and no web addresses.
+        let unsaved = "The update could not be saved to disk.";
+        let dir = app.path().app_cache_dir().map_err(|_| unsaved)?.join("updates");
+        tokio::fs::create_dir_all(&dir).await.map_err(|_| unsaved)?;
         let file = dir.join(format!("WeathaDock-{latest}-setup.exe"));
-        tokio::fs::write(&file, &bytes).await.map_err(|e| format!("Could not save the update: {e}"))?;
+        tokio::fs::write(&file, &bytes).await.map_err(|_| unsaved)?;
         self.set(app, |s| {
             s.status = "ready";
             s.percent = Some(100);

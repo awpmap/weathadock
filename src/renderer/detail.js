@@ -19,7 +19,7 @@
   });
 
   function tz() { return state && state.location && state.location.timeZone; }
-  function nowMs() { return window.sky.__mock && state && state.updatedAt ? new Date(state.updatedAt).getTime() + 120000 : Date.now(); }
+  function nowMs() { return U.now(state); }
   function hasData() { return !!(state && state.current); }
 
   /* ---------- navigation ---------- */
@@ -56,8 +56,7 @@
   }
   $('btn-refresh').addEventListener('click', doRefresh);
 
-  /* keyboard: Ctrl+R refresh, Ctrl+1..5 sections, Esc closes an open menu */
-  var KEY_SECTIONS = ['overview', 'hourly', 'daily', 'alerts', 'settings'];
+  /* keyboard: Ctrl+R refresh, Ctrl+1..6 sections in the order of the sidebar, Esc closes an open menu */
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       if (!locMenu.hidden) { closeMenu(); locBtn.focus(); e.preventDefault(); }
@@ -65,7 +64,7 @@
     }
     if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
     if (e.key === 'r' || e.key === 'R') { e.preventDefault(); doRefresh(); }
-    else if (e.key >= '1' && e.key <= '5') { e.preventDefault(); go(KEY_SECTIONS[Number(e.key) - 1]); }
+    else if (e.key >= '1' && e.key <= String(SECTIONS.length)) { e.preventDefault(); go(SECTIONS[Number(e.key) - 1]); }
   });
 
   /* ---------- location switcher (header menu) ---------- */
@@ -140,7 +139,7 @@
 
   function alertWhen(a) {
     var t = tz(), now = new Date(nowMs()).toISOString();
-    var end = a.ends || a.expires;
+    var end = a.ends;   /* when the hazard ends; "expires" is only when this message is due to be replaced */
     var future = a.onset && new Date(a.onset).getTime() > nowMs();
     if (future) return 'From <b>' + esc(U.when(a.onset, t, now)) + '</b>' + (end ? ' until <b>' + esc(U.when(end, t, now)) + '</b>' : '');
     return end ? 'In effect until <b>' + esc(U.when(end, t, now)) + '</b>' : 'In effect now';
@@ -177,6 +176,8 @@
   function uvWord(v) { return v == null ? '' : v < 3 ? 'Low' : v < 6 ? 'Moderate' : v < 8 ? 'High' : v < 11 ? 'Very high' : 'Extreme'; }
   function visWord(v) { return v == null ? '' : v >= 10 ? 'Clear view' : v >= 6 ? 'Good' : v >= 3 ? 'Moderate' : v >= 1 ? 'Poor' : 'Very poor'; }
   function tile(gl, name, value, unit, sub, extra) {
+    /* no reading: a plain dash and a reason, never a dash with a unit beside it */
+    if (value === '–') { unit = ''; extra = ''; sub = 'Not reported'; }
     return '<div class="card tile"><div class="tile-h">' + I.gl(gl) + name + '</div><div class="tile-v">' + value + (unit ? '<small>' + unit + '</small>' : '') + (extra || '') + '</div><div class="tile-s">' + (sub || '&nbsp;') + '</div></div>';
   }
 
@@ -207,22 +208,29 @@
 
   function incomingCard(s) {
     var np = s.nextPrecip || {};
-    var t = tz();
-    var tl = np.kind ? U.precipTimeline(s.minutely, t, { height: 46 }) : '';
-    var sub = '';
-    if (np.kind) {
+    var t = tz(), all = s.minutely || [], steps = all.slice(0, 24);   /* the chart covers 6 hours */
+    var known = all.length > 0 || (s.hourly || []).length > 0;
+    var tl = np.kind ? U.precipTimeline(steps, t, { height: 46 }) : '';
+    var sub = '', body = tl;
+    if (np.kind && np.chance != null) sub = 'Based on the hourly chance of precipitation.';
+    else if (np.kind) {
       var parts = [];
       if (!np.isNow && np.startsAt) parts.push('Starts around ' + U.time(np.startsAt, t));
       if (np.endsAt) parts.push((np.isNow ? 'Expected to end around ' : 'ends around ') + U.time(np.endsAt, t));
       sub = parts.join(', ');
-      var total = (s.minutely || []).reduce(function (a, m) { return a + (m.precip || 0); }, 0);
+      var total = steps.reduce(function (a, m) { return a + (m.precip || 0); }, 0);
       if (total > 0.005) sub += (sub ? ' · ' : '') + '≈ ' + total.toFixed(2) + '″ ' + (np.kind === 'snow' ? 'liquid equivalent ' : '') + 'in the next 6 h';
-    } else sub = 'No rain or snow expected.';
-    var body = tl || (np.kind ? '' : '<div class="inc-dry"></div><div class="inc-dry-ticks"><span>Now</span><span>+6 h</span><span>+12 h</span></div>');
+    } else if (known) {
+      /* the bar spans exactly the hours the headline speaks for */
+      var end = all.length ? new Date(all[all.length - 1].time).getTime() + 900000 : nowMs() + 12 * 3600000;
+      var hrs = Math.max(1, Math.round((end - nowMs()) / 3600000));
+      sub = 'No rain or snow expected.';
+      body = '<div class="inc-dry"></div><div class="inc-dry-ticks"><span>Now</span>' + (hrs % 2 ? '' : '<span>+' + hrs / 2 + ' h</span>') + '<span>+' + hrs + ' h</span></div>';
+    }
     return '<div class="card card-pad inc ' + (np.kind ? 'k-' + np.kind : 'is-dry') + '"><div class="card-h"><span>' + I.gl('umbrella') + 'Incoming weather</span>' +
       '<button class="link" data-go="hourly">Hourly' + I.gl('chevron-right') + '</button></div>' +
-      '<div class="inc-head"><span class="inc-ic">' + I.gl(np.kind ? U.kindGlyph(np.kind) : 'check') + '</span><span>' + esc(np.headline || 'No precipitation data') + '</span></div>' +
-      '<div class="inc-sub">' + esc(sub) + '</div>' + body + '</div>';
+      '<div class="inc-head"><span class="inc-ic">' + I.gl(np.kind ? U.kindGlyph(np.kind) : known ? 'check' : 'info') + '</span><span>' + esc(np.headline || 'Precipitation timing unavailable') + '</span></div>' +
+      (sub ? '<div class="inc-sub">' + esc(sub) + '</div>' : '') + body + '</div>';
   }
 
   function renderOverview() {
@@ -233,13 +241,14 @@
         return '<button class="ov-alert sev-' + U.sev(a) + '" data-go="alerts"><span class="ov-alert-ic">' + I.gl('alert') + '</span><span class="ov-alert-tx"><div class="ov-alert-ev">' + esc(a.event) + '</div><div class="ov-alert-sub">' + alertWhen(a).replace(/<\/?b>/g, '') + ' · ' + esc(a.areaDesc || a.sender || '') + '</div></span>' + I.gl('chevron-right') + '</button>';
       }).join('') + '</div>';
     }
-    html += '<div class="ov-hero"><div><div class="ov-temp">' + (c.temp == null ? '–' : Math.round(c.temp) + '<sup>°</sup>') + '</div>' +
+    html += '<div class="ov-hero"><div><div class="ov-temp">' + (c.temp == null ? '–' : U.whole(c.temp) + '<sup>°</sup>') + '</div>' +
       '<div class="ov-cond">' + esc(c.condition || '') + '</div>' +
       '<div class="ov-meta"><span>High <b>' + U.deg(t.high) + '</b></span><span>Low <b>' + U.deg(t.low) + '</b></span>' + (c.feelsLike != null ? '<i></i><span>Feels like <b>' + U.deg(c.feelsLike) + '</b></span>' : '') + '</div></div>' +
       '<div class="ov-icon">' + I.wx(c.icon, c.isDay, { animated: true }) + '</div>' +
       (t.summary ? '<p class="ov-sum">' + esc(t.summary) + '</p>' : '') + '</div>';
 
-    html += '<div class="grid-2">' + incomingCard(s) + sunCard(s) + '</div>';
+    var sun = sunCard(s);
+    html += '<div class="grid-2' + (sun ? '' : ' is-single') + '">' + incomingCard(s) + sun + '</div>';
 
     var gust = c.windGust != null && c.windGust > (c.windSpeed || 0) ? 'Gusts to ' + c.windGust + ' mph' : windWord(c.windSpeed);
     var uvPos = c.uvIndex == null ? 0 : Math.min(100, (c.uvIndex / 11) * 100);
@@ -249,7 +258,7 @@
       tile('sunny', 'UV index', U.num(c.uvIndex), esc(uvWord(c.uvIndex)), '<div class="uv-bar"><i style="left:' + uvPos.toFixed(0) + '%"></i></div>') +
       tile('gauge', 'Pressure', c.pressure == null ? '–' : Number(c.pressure).toFixed(2), 'inHg', c.pressure == null ? '' : c.pressure >= 30.2 ? 'High pressure' : c.pressure <= 29.7 ? 'Low pressure' : 'Near normal') +
       tile('eye', 'Visibility', U.num(c.visibility), 'mi', esc(visWord(c.visibility))) +
-      tile('thermo', 'Feels like', U.deg(c.feelsLike), '', c.feelsLike == null || c.temp == null ? '' : c.feelsLike < c.temp - 2 ? 'Wind makes it feel colder' : c.feelsLike > c.temp + 2 ? 'Humidity makes it feel warmer' : 'Close to the actual temperature') +
+      tile('thermo', 'Feels like', U.deg(c.feelsLike), '', c.feelsLike == null || c.temp == null ? '' : c.feelsLike < c.temp - 2 ? (c.temp >= 80 ? 'Dry air makes it feel cooler' : 'Wind makes it feel colder') : c.feelsLike > c.temp + 2 ? 'Humidity makes it feel warmer' : 'Close to the actual temperature') +
       '</div>';
 
     var hs = (s.hourly || []).slice(0, 12);
@@ -510,13 +519,19 @@
   function renderAlerts() {
     var s = state, al = s.alerts || [], zone = tz();
     var where = s.location ? esc(s.location.city) + ', ' + esc(s.location.state) : 'your area';
+    /* "no alerts" is only said when the Weather Service was actually asked a moment ago */
+    var unchecked = !!(s.sources && s.sources.alerts === false);
     if (!al.length) {
-      $('sec-alerts').innerHTML = '<h1 class="page-title">Alerts</h1><div class="empty"><span class="empty-ic">' + I.gl('check-circle') + '</span><h2>No active alerts</h2>' +
-        '<p>The National Weather Service has no watches, warnings or advisories in effect for ' + where + '.' + (s.sources && s.sources.nws === false ? ' Alerts couldn’t be refreshed just now, so this may be out of date.' : '') + '</p></div>';
+      $('sec-alerts').innerHTML = '<h1 class="page-title">Alerts</h1>' + (unchecked
+        ? '<div class="empty"><span class="empty-ic is-muted">' + I.gl('offline') + '</span><h2>Alerts couldn’t be checked</h2>' +
+          '<p>The National Weather Service hasn’t answered, so there may be alerts for ' + where + ' that aren’t shown here. WeathaDock checks again every two minutes.</p></div>'
+        : '<div class="empty"><span class="empty-ic">' + I.gl('check-circle') + '</span><h2>No active alerts</h2>' +
+          '<p>The National Weather Service has no watches, warnings or advisories in effect for ' + where + '.</p></div>');
       return;
     }
     var now = new Date(nowMs()).toISOString();
-    var html = '<h1 class="page-title">Alerts</h1><p class="page-sub">' + al.length + ' official ' + (al.length === 1 ? 'alert' : 'alerts') + ' in effect for ' + where + ', most severe first.</p>';
+    var html = '<h1 class="page-title">Alerts</h1><p class="page-sub">' + al.length + ' official ' + (al.length === 1 ? 'alert' : 'alerts') + ' in effect for ' + where + ', most severe first.' +
+      (unchecked ? (s.alertsAt ? ' Last checked ' + esc(U.when(s.alertsAt, zone, now)) + ', so newer alerts may be missing.' : ' The list couldn’t be checked again, so newer alerts may be missing.') : '') + '</p>';
     al.forEach(function (a) {
       var sv = U.sev(a);
       html += '<article class="card al sev-' + sv + '"><div class="al-top"><span class="al-ic">' + I.gl('alert') + '</span><div><h2 class="al-ev">' + esc(a.event) + '</h2><div class="al-when">' + alertWhen(a) + '</div></div></div>' +
@@ -577,7 +592,7 @@
     $('battery-copy').hidden = !s.mouseBattery;
     var docked = s.placement === 'taskbar';
     $('placement-sub').textContent = docked
-      ? 'Docked at the left end of the taskbar. Best with centered taskbar icons.'
+      ? 'Docked at the left end of the taskbar, best with centered icons. On a full taskbar the tray icon shows the temperature instead.'
       : 'A widget on your desktop.';
     document.querySelectorAll('[data-desktop-only]').forEach(function (r) { r.hidden = docked; });
     document.querySelectorAll('[data-taskbar-only]').forEach(function (r) { r.hidden = !docked; });
@@ -597,18 +612,24 @@
   /* taskbar strip options live in one nested object */
   function patchBar(k, v) { var tb = Object.assign({}, settings && settings.taskbar); tb[k] = v; patch({ taskbar: tb }); }
   document.querySelectorAll('[data-tb]').forEach(function (b) { b.addEventListener('click', function () { patchBar(b.dataset.tb, b.getAttribute('aria-checked') !== 'true'); }); });
-  document.querySelector('[data-tb-hours]').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) patchBar('hours', Number(b.dataset.val)); });
-  document.querySelectorAll('[data-seg]').forEach(function (g) {
-    g.addEventListener('click', function (e) {
-      var b = e.target.closest('button'); if (!b) return;
-      var o = {}; o[g.dataset.seg] = g.dataset.seg === 'refreshMinutes' ? Number(b.dataset.val) : b.dataset.val; patch(o);
-    });
+  /* a row of exclusive choices: the arrow keys move the choice, as in any radio group */
+  function arrowKeys(g) {
     g.addEventListener('keydown', function (e) {
       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
       var bs = [].slice.call(g.querySelectorAll('button')), i = bs.indexOf(document.activeElement);
       var nx = bs[(i + (e.key === 'ArrowRight' ? 1 : bs.length - 1)) % bs.length];
       e.preventDefault(); nx.focus(); nx.click();
     });
+  }
+  var tbHours = document.querySelector('[data-tb-hours]');
+  tbHours.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) patchBar('hours', Number(b.dataset.val)); });
+  arrowKeys(tbHours);
+  document.querySelectorAll('[data-seg]').forEach(function (g) {
+    g.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      var o = {}; o[g.dataset.seg] = g.dataset.seg === 'refreshMinutes' ? Number(b.dataset.val) : b.dataset.val; patch(o);
+    });
+    arrowKeys(g);
   });
 
   zipIn.addEventListener('input', function () {
@@ -688,7 +709,7 @@
     var known = !!(s && s.updatedAt);
     [['src-nws', src.nws], ['src-om', src.openMeteo]].forEach(function (p) {
       $(p[0]).className = 'src-dot' + (known ? (p[1] ? ' is-on' : ' is-off') : '');
-      $(p[0] + '-tx').textContent = known ? (p[1] ? 'Connected' : 'No response') : '';
+      $(p[0] + '-tx').textContent = known ? (p[1] ? (p[0] === 'src-nws' && src.alerts === false ? 'Alerts not checked' : 'Connected') : 'No response') : '';
     });
   }
 

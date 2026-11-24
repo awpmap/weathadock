@@ -4,21 +4,51 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+# The build runs other people's code (npm packages, crates and their build scripts), so it may
+# only read the repository. Creating a release is left to the publish job, which runs none of it.
 permissions:
-  contents: write
+  contents: read
+# One run at a time for each branch. Runs on main are never cut short, so a release that has
+# started publishing always finishes.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # A release is named after the version, described by the notes and updated to by number,
+      # so the three places that state it must agree before anything is built.
+      - name: Check that the version is the same everywhere
+        shell: bash
+        run: |
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version" | tr -d '\r')
+          crate=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' src-tauri/Cargo.toml | head -n 1 | tr -d '\r')
+          notes=$(sed -n 's/^## WeathaDock \([0-9][0-9.]*\).*/\1/p' RELEASE_NOTES.md | head -n 1 | tr -d '\r')
+          echo "tauri.conf.json: $conf, Cargo.toml: $crate, RELEASE_NOTES.md: $notes"
+          if [ -z "$conf" ] || [ "$conf" != "$crate" ] || [ "$conf" != "$notes" ]; then
+            echo "::error::The version must be the same in src-tauri/tauri.conf.json, src-tauri/Cargo.toml and the first heading of RELEASE_NOTES.md."
+            exit 1
+          fi
+      # The pages are plain scripts with no build step, so nothing else would notice a typo
+      # that leaves the widget blank.
+      - name: Check that the page scripts parse
+        shell: bash
+        run: for f in src/renderer/*.js src-tauri/src/bridge.js; do node --check "$f"; done
       - run: npm ci
-      - run: cargo test -p weathadock-core
+      # Fails when Cargo.lock does not match the manifests, so a build never picks versions
+      # other than the ones that were tested.
+      - run: cargo fetch --locked --target x86_64-pc-windows-msvc
+      - run: cargo test -p weathadock-core --locked
       - run: npm run build
       - name: Collect installer
         id: installer
@@ -28,6 +58,12 @@ jobs:
           echo "file=$file" >> "$GITHUB_OUTPUT"
           ls -l "$file"
           ls -l target/release/*.exe
+          # Staying small is a feature. Raise the limit only for growth that was meant.
+          size=$(stat -c %s target/release/weathadock.exe)
+          if [ "$size" -gt 6291456 ]; then
+            echo "::error::weathadock.exe is $size bytes, over its 6 MB budget."
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: WeathaDock-windows
@@ -70,6 +106,33 @@ jobs:
           $report += "settings: " + (Get-Content (Join-Path $cfg 'settings.json') -Raw).Length + " bytes; cache exists: " + (Test-Path (Join-Path $cfg 'forecast-cache.json'))
           $report += "exe size: {0:N1} MB" -f ((Get-Item target/release/weathadock.exe).Length/1MB)
           $report | Tee-Object smoke/report.txt
+          # Idle cost: processor time the app and its own WebView2 processes use while the widget
+          # just sits on the desktop, with Windows animations on and then off (reduced motion).
+          function Get-AppCpu {
+            $ids = @((Get-Process weathadock -ErrorAction SilentlyContinue).Id)
+            $ids += @((Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -match 'weathadock' }).ProcessId)
+            $own = 0.0; $web = 0.0
+            foreach ($id in $ids) {
+              if (-not $id) { continue }
+              $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+              if (-not $p) { continue }
+              if ($p.ProcessName -eq 'weathadock') { $own += $p.CPU } else { $web += $p.CPU }
+            }
+            return @($own, $web, $ids.Count)
+          }
+          Add-Type -Namespace Smoke -Name Spi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, ref int value, uint flags); [DllImport("user32.dll", EntryPoint = "SystemParametersInfo")] public static extern bool SetSystemParameter(uint action, uint param, IntPtr value, uint flags);'
+          $animated = 0
+          [Smoke.Spi]::SystemParametersInfo(0x1042, 0, [ref]$animated, 0) | Out-Null
+          "IDLE Windows animation setting at start: $animated"
+          foreach ($phase in 1, 0) {
+            [Smoke.Spi]::SetSystemParameter(0x1043, 0, [IntPtr]$phase, 2) | Out-Null
+            Start-Sleep -Seconds 6
+            $cpu0 = Get-AppCpu
+            Start-Sleep -Seconds 30
+            $cpu1 = Get-AppCpu
+            "IDLE animations={0}: app {1:N2} s + webview {2:N2} s of processor time in 30 s = {3:N1}% of one core ({4} processes)" -f $phase, ($cpu1[0] - $cpu0[0]), ($cpu1[1] - $cpu0[1]), ((($cpu1[0] - $cpu0[0]) + ($cpu1[1] - $cpu0[1])) / 30 * 100), $cpu1[2]
+          }
+          [Smoke.Spi]::SetSystemParameter(0x1043, 0, [IntPtr]$animated, 2) | Out-Null
           # Starting it a second time asks the running copy to open its main window.
           Start-Process -FilePath target/release/weathadock.exe
           Start-Sleep -Seconds 8
@@ -84,10 +147,36 @@ jobs:
           "WITH-WINDOW TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
           if ($app.HasExited) { Write-Error "WeathaDock exited early with code $($app.ExitCode)"; exit 1 }
           Stop-Process -Id $app.Id -Force
+          # The app's windows as Windows sees them, for the runs below.
+          Add-Type -Namespace Smoke -Name Win -MemberDefinition @'
+          public delegate bool EachWindow(IntPtr window, IntPtr unused);
+          public struct Rect { public int Left, Top, Right, Bottom; }
+          [DllImport("user32.dll")] public static extern bool EnumWindows(EachWindow each, IntPtr unused);
+          [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+          [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+          [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr window, int index);
+          [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+          // The visible windows of one process that are at least this tall: their size, where
+          // they are, and whether they stay above other windows.
+          public static string Visible(uint wanted, int least) {
+            var found = new System.Text.StringBuilder();
+            EnumWindows(delegate (IntPtr window, IntPtr unused) {
+              uint process; Rect r;
+              GetWindowThreadProcessId(window, out process);
+              if (process == wanted && IsWindowVisible(window) && GetWindowRect(window, out r) && r.Right - r.Left > 60 && r.Bottom - r.Top >= least)
+                found.Append((r.Right - r.Left) + "x" + (r.Bottom - r.Top) + " at " + r.Left + "," + r.Top + ((GetWindowLong(window, -20) & 8) != 0 ? " on top; " : " not on top; "));
+              return true;
+            }, IntPtr.Zero);
+            return found.ToString();
+          }
+          '@
           # Third run: docked on the taskbar. Record the bottom strip of the screen at full size.
           Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
           '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"placement":"taskbar","mouseBattery":true}' | Set-Content (Join-Path $cfg 'settings.json')
+          # Windows 11 keeps a new tray icon in its overflow menu. Bring this one out, so the
+          # screenshots from here on show what the tray icon looks like.
+          Get-ChildItem 'HKCU:\Control Panel\NotifyIconSettings' -ErrorAction SilentlyContinue | Where-Object { $_.GetValue('ExecutablePath') -like '*weathadock.exe' } | ForEach-Object { Set-ItemProperty -Path $_.PSPath -Name IsPromoted -Value 1 -Type DWord; "TRAY icon brought out of the overflow menu" }
           $env:WEATHADOCK_LOG = Join-Path $env:TEMP 'weathadock.log'
           $dock = Start-Process -FilePath target/release/weathadock.exe -PassThru
           Start-Sleep -Seconds 20
@@ -108,6 +197,9 @@ jobs:
           Write-Output "SCREENSHOT4-BEGIN"
           [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/dock-desktop.jpg")) -split '(.{4000})' | Where-Object { $_ }
           Write-Output "SCREENSHOT4-END"
+          $procs = Get-Process | Where-Object { $_.ProcessName -match 'weathadock|msedgewebview2' }
+          "DOCKED TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
+          "STRIP docked: " + [Smoke.Win]::Visible($dock.Id, 30)
           # A borderless window that fills the screen, like a game: the strip must get out of the way, then return.
           @'
           Add-Type -AssemblyName System.Windows.Forms
@@ -126,10 +218,58 @@ jobs:
             [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/fullscreen$shot.jpg")) -split '(.{4000})' | Where-Object { $_ }
             Write-Output "SCREENSHOT$shot-END"
           }
+          $cpu0 = Get-AppCpu
+          Start-Sleep -Seconds 30
+          $cpu1 = Get-AppCpu
+          "IDLE docked on the taskbar: app {0:N2} s + webview {1:N2} s of processor time in 30 s = {2:N1}% of one core ({3} processes)" -f ($cpu1[0] - $cpu0[0]), ($cpu1[1] - $cpu0[1]), ((($cpu1[0] - $cpu0[0]) + ($cpu1[1] - $cpu0[1])) / 30 * 100), $cpu1[2]
+          # Crowd the taskbar: on a centered taskbar every extra app button pushes Start to the left,
+          # into the stretch the docked strip uses. The strip must shrink or step aside (the tray
+          # icon then shows the temperature), never sit on app buttons, and return afterwards.
+          $crowd = @()
+          foreach ($exe in 'notepad', 'cmd', 'taskmgr', 'regedit', 'charmap', 'msinfo32', 'resmon', 'dxdiag', 'winver', 'msconfig', 'cleanmgr', 'odbcad32', 'iexpress', 'mspaint') {
+            try { $crowd += Start-Process $exe -PassThru -ErrorAction Stop } catch { "CROWD could not start $exe" }
+          }
+          foreach ($shot in 7, 8) {
+            Start-Sleep -Seconds $(if ($shot -eq 7) { 6 } else { 20 })
+            $strip = New-Object System.Drawing.Bitmap $b.Width, 160
+            [System.Drawing.Graphics]::FromImage($strip).CopyFromScreen(0, ($b.Height - 160), 0, 0, (New-Object System.Drawing.Size $b.Width, 160))
+            $strip.Save("smoke/crowd$shot.jpg", $jpeg, $q)
+            Write-Output "SCREENSHOT$shot-BEGIN"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/crowd$shot.jpg")) -split '(.{4000})' | Where-Object { $_ }
+            Write-Output "SCREENSHOT$shot-END"
+          }
+          "STRIP on a full taskbar: " + [Smoke.Win]::Visible($dock.Id, 30)
+          $crowd | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+          Get-Process notepad, taskmgr, regedit, charmap, msinfo32, resmon, perfmon, dxdiag, winver, msconfig, cleanmgr, odbcad32, iexpress, mspaint -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 12
+          $strip = New-Object System.Drawing.Bitmap $b.Width, 160
+          [System.Drawing.Graphics]::FromImage($strip).CopyFromScreen(0, ($b.Height - 160), 0, 0, (New-Object System.Drawing.Size $b.Width, 160))
+          $strip.Save("smoke/crowd9.jpg", $jpeg, $q)
+          Write-Output "SCREENSHOT9-BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/crowd9.jpg")) -split '(.{4000})' | Where-Object { $_ }
+          Write-Output "SCREENSHOT9-END"
+          $back = [Smoke.Win]::Visible($dock.Id, 30)
+          "STRIP after the taskbar emptied: $back"
           if ($dock.HasExited) { Write-Error "WeathaDock (taskbar placement, mouse battery on) exited early with code $($dock.ExitCode)"; exit 1 }
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
-          Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 25 | ForEach-Object { "TRACE $_" }
+          Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { "TRACE $_" }
           $env:WEATHADOCK_LOG = $null
+          if ($back -notmatch '\d on top; ') { Write-Error "After the taskbar emptied again, the docked strip did not come back."; exit 1 }
+          # Fourth run: a desktop widget set to stay above other windows. Once a full-screen
+          # window has come and gone, the widget must be back on screen and still on top.
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"widgetOnTop":true}' | Set-Content (Join-Path $cfg 'settings.json')
+          $top = Start-Process -FilePath target/release/weathadock.exe -PassThru
+          Start-Sleep -Seconds 15
+          "ONTOP before full screen: " + [Smoke.Win]::Visible($top.Id, 61)
+          Start-Process pwsh -ArgumentList '-NoProfile', '-File', 'smoke/fullscreen.ps1'
+          Start-Sleep -Seconds 5
+          "ONTOP during full screen: " + [Smoke.Win]::Visible($top.Id, 61)
+          Start-Sleep -Seconds 10
+          $after = [Smoke.Win]::Visible($top.Id, 61)
+          "ONTOP after full screen: $after"
+          if ($top.HasExited) { Write-Error "WeathaDock (keep above other windows) exited early with code $($top.ExitCode)"; exit 1 }
+          Stop-Process -Id $top.Id -Force -ErrorAction SilentlyContinue
+          if ($after -notmatch '\d on top; ') { Write-Error "After a full-screen window closed, the widget set to stay above other windows was not back on screen and on top."; exit 1 }
       # Run the installer the way a person would (double-click, no flags) and record its
       # window while it works, then the desktop once the app has opened.
       - name: Installer screenshots
@@ -174,20 +314,39 @@ jobs:
         with:
           name: smoke
           path: smoke/
-      # Releases follow the version in src-tauri/tauri.conf.json: the first build on main with a
-      # version that has no GitHub Release yet, and whose commit message contains [release],
-      # publishes the installer there. Installed copies
-      # of the app look at the latest release for updates.
+  # Releases follow the version in src-tauri/tauri.conf.json: the first build on main with a
+  # version that has no GitHub Release yet, and whose commit message contains [release],
+  # publishes the installer there. Installed copies of the app look at the latest release for
+  # updates. This job builds nothing: it publishes the very installer the build job made and
+  # tested, and it is the only place a token that can write to the repository exists.
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: WeathaDock-windows
+          path: installer
       - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          file=$(ls installer/*-setup.exe | head -n 1)
+          if [ -z "$version" ] || [ ! -f "$file" ]; then
+            echo "::error::Nothing to publish: no version or no installer from the build job."
+            exit 1
+          fi
           if gh release view "v$version" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release v$version already exists, nothing to publish."
           else
-            gh release create "v$version" "${{ steps.installer.outputs.file }}" --repo "${{ github.repository }}" \
+            gh release create "v$version" "$file" --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" --title "WeathaDock $version" --notes-file RELEASE_NOTES.md
           fi

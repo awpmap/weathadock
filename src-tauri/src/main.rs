@@ -727,11 +727,13 @@ fn update_tray(app: &AppHandle) {
 fn apply_tray_image(app: &AppHandle) {
     let Some(tray) = app.tray_by_id("main") else { return };
     let number = shared(app).tray_number.lock().unwrap().clone();
-    let bytes = match (setting(app, "coveredMode").as_str(), number) {
-        (Some("tray"), Some(png)) if !docked(app) => png,
-        (_, Some(png)) if out_of_room(app) => png,
-        _ => TRAY_PLAIN.to_vec(),
+    let number = match setting(app, "coveredMode").as_str() {
+        Some("tray") if !docked(app) => number,
+        _ if out_of_room(app) => number,
+        _ => None,
     };
+    trace(format!("tray icon -> {}", if number.is_some() { "temperature" } else { "app glyph" }));
+    let bytes = number.unwrap_or_else(|| TRAY_PLAIN.to_vec());
     if let Ok(image) = tauri::image::Image::from_bytes(&bytes) {
         let _ = tray.set_icon(Some(image));
     }

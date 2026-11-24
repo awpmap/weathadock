@@ -174,6 +174,9 @@ jobs:
           Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
           '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"placement":"taskbar","mouseBattery":true}' | Set-Content (Join-Path $cfg 'settings.json')
+          # Windows 11 keeps a new tray icon in its overflow menu. Bring this one out, so the
+          # screenshots from here on show what the tray icon looks like.
+          Get-ChildItem 'HKCU:\Control Panel\NotifyIconSettings' -ErrorAction SilentlyContinue | Where-Object { $_.GetValue('ExecutablePath') -like '*weathadock.exe' } | ForEach-Object { Set-ItemProperty -Path $_.PSPath -Name IsPromoted -Value 1 -Type DWord; "TRAY icon brought out of the overflow menu" }
           $env:WEATHADOCK_LOG = Join-Path $env:TEMP 'weathadock.log'
           $dock = Start-Process -FilePath target/release/weathadock.exe -PassThru
           Start-Sleep -Seconds 20

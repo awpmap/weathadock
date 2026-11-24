@@ -4,10 +4,19 @@
 
   var params = new URLSearchParams(location.search);
 
-  /* Resolves once window.sky exists. Loads mock.js when the preload API is absent. */
+  /* Resolves once window.sky exists. Inside the app the bridge defines it before any page script
+     runs. The sample weather in mock.js is for design previews in a plain browser only, so the
+     app itself can never show it. */
   function ready() {
     return new Promise(function (resolve) {
       if (window.sky) return resolve(window.sky);
+      if (window.__TAURI_INTERNALS__ || /^tauri/i.test(location.hostname) || /^tauri/i.test(location.protocol)) {
+        var tries = 0, wait = setInterval(function () {
+          if (window.sky) { clearInterval(wait); resolve(window.sky); }
+          else if (++tries > 200) clearInterval(wait);
+        }, 50);
+        return;
+      }
       var s = document.createElement('script');
       s.src = 'mock.js';
       s.onload = function () { resolve(window.sky); };
@@ -53,7 +62,11 @@
     return (same ? '' : weekday(iso, tz) + ' ') + time(iso, tz);
   }
 
-  function deg(v) { return v == null || isNaN(v) ? '–' : Math.round(v) + '°'; }
+  /* whole degrees with a true minus sign (U+2212), which sits level with the digits */
+  function whole(v) { return String(Math.round(v)).replace('-', '\u2212'); }
+  function deg(v) { return v == null || isNaN(v) ? '–' : whole(v) + '°'; }
+  /* the present moment; design previews pin it just after the sample data's own timestamp */
+  function now(s) { return window.sky && window.sky.__mock && s && s.updatedAt ? new Date(s.updatedAt).getTime() + 120000 : Date.now(); }
   function num(v, suffix) { return v == null || isNaN(v) ? '–' : v + (suffix || ''); }
 
   /* temperature -> color (cool blue .. teal .. gold .. orange .. red) for range bars */
@@ -84,6 +97,8 @@
     if (!np || !np.kind) return '';
     var w = kindWord(np.kind);
     if (np.isNow) return np.endsAt ? w + ' until ' + hour(np.endsAt, tz) : w + ' now';
+    /* from the hourly chance, not from minute-by-minute timing: no minute counts */
+    if (np.chance != null) return np.startsAt && np.minutesUntil > 0 ? w + ' around ' + hour(np.startsAt, tz) : w + ' likely';
     if (np.minutesUntil != null && np.minutesUntil <= 90) return w + ' in ' + Math.max(1, Math.round(np.minutesUntil)) + ' min';
     if (np.startsAt) return w + ' at ' + hour(np.startsAt, tz);
     return w + ' soon';
@@ -164,7 +179,7 @@
     params: params, ready: ready, esc: esc,
     time: time, hour: hour, hourNum: hourNum, weekday: weekday, weekdayLong: weekdayLong, monthDay: monthDay, dayKey: dayKey,
     dateLabel: dateLabel, dateWeekdayLong: dateWeekdayLong, when: when,
-    deg: deg, num: num, tempColor: tempColor, sev: sev, sevColor: sevColor,
+    deg: deg, whole: whole, now: now, num: num, tempColor: tempColor, sev: sev, sevColor: sevColor,
     kindGlyph: kindGlyph, kindWord: kindWord, shortHint: shortHint, precipTimeline: precipTimeline,
     dragOrClick: dragOrClick, watchVisibility: watchVisibility
   };

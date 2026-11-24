@@ -269,7 +269,7 @@
 
     var day0 = isDayAt(now);
     return {
-      status: 'ok', error: null, stale: false, updatedAt: iso(now - 2 * MIN), sources: { nws: true, openMeteo: true },
+      status: 'ok', error: null, stale: false, updatedAt: iso(now - 2 * MIN), sources: { nws: true, openMeteo: true, alerts: true },
       location: LOC,
       current: Object.assign({ condition: label(sc.cur.icon, day0), isDay: day0 }, sc.cur),
       today: { high: sc.highs[0], low: sc.lows[0], sunrise: daily[0].sunrise, sunset: daily[0].sunset, summary: sc.summary },
@@ -301,7 +301,8 @@
       st.stale = true;
       st.error = 'Couldn\u2019t reach the weather service. Showing the last forecast we have.';
       st.updatedAt = iso(new Date(st.updatedAt).getTime() - 47 * MIN);
-      st.sources = { nws: false, openMeteo: false };
+      st.sources = { nws: false, openMeteo: false, alerts: false };
+      st.alertsAt = st.updatedAt;
     }
     return st;
   }

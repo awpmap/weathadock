@@ -316,6 +316,9 @@ jobs:
           Start-Sleep -Seconds 8
           "BACKDROP the desktop's own wallpaper: " + (& $looks)
           Save-RightHalf 12
+          # What looking at the wallpaper costs while nothing changes: the first five looks,
+          # all of them before the wallpaper was switched.
+          "BACKDROP cost: " + (Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^wallpaper looked at' } | Select-Object -First 1)
           $env:WEATHADOCK_LOG = $null
           if ($auto.HasExited) { Write-Error "WeathaDock (text colour following the wallpaper) exited early with code $($auto.ExitCode)"; exit 1 }
           Stop-Process -Id $auto.Id -Force -ErrorAction SilentlyContinue

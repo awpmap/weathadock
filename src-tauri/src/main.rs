@@ -947,9 +947,17 @@ fn start_backdrop_watch(app: &AppHandle) {
         // Kept for the life of the thread, so each look does not start the machinery again.
         #[cfg(windows)]
         let _com = win32::Com::start();
+        let (mut looks, mut spent) = (0, Duration::ZERO);
         loop {
             std::thread::sleep(BACKDROP_EVERY);
+            let started = std::time::Instant::now();
             check_backdrop_now(&app);
+            (looks, spent) = (looks + 1, spent + started.elapsed());
+            if looks == 5 {
+                // For the troubleshooting log: what the looking costs.
+                trace(format!("wallpaper looked at {looks} times in {:.1} ms", spent.as_secs_f64() * 1000.0));
+                (looks, spent) = (0, Duration::ZERO);
+            }
         }
     });
 }

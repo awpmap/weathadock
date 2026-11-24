@@ -81,7 +81,7 @@
           '<h2 class="group-title">Look</h2>' +
           '<div class="card cz-card">' +
             row('Background', seg('glass', 'Background', [['none', 'Transparent'], ['clear', 'Tinted glass'], ['frosted', 'Frosted']])) +
-            row('Text color', seg('ink', 'Text color', [['light', 'Light'], ['dark', 'Dark']]), 'Dark suits bright wallpapers.') +
+            row('Text color', seg('ink', 'Text color', [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]), '<span id="cz-ink-s"></span>') +
             row('Opacity', '<div class="cz-range"><input type="range" id="cz-op" min="30" max="100" step="5" aria-label="Widget opacity"><output id="cz-op-v"></output></div>') +
           '</div>' +
 
@@ -191,7 +191,10 @@
     $('#cz-reset').disabled = !!p;
     $('#cz-reset-tx').textContent = 'Reset to ' + (base ? base.name : 'preset');
 
-    setSeg('glass', s.glass === 'clear' || s.glass === 'frosted' ? s.glass : 'none');
+    var glass = s.glass === 'clear' || s.glass === 'frosted' ? s.glass : 'none';
+    setSeg('glass', glass);
+    /* on a glass background the text sits on the glass, not on the wallpaper */
+    $('#cz-ink-s').textContent = glass === 'none' ? 'Auto follows your wallpaper.' : 'On glass, Auto stays light.';
     ['ink', 'orientation', 'size', 'align', 'hours', 'days'].forEach(function (k) { setSeg(k, c[k]); });
     $$('.cz-chip').forEach(function (b) { b.setAttribute('aria-checked', c.show[b.dataset.k] ? 'true' : 'false'); });
     $$('.cz-count').forEach(function (l) { l.classList.toggle('is-off', !c.show[l.dataset.for]); });
@@ -217,7 +220,7 @@
     $$('.cz-bgs button').forEach(function (b) { var on = b.dataset.bg === backdrop; b.setAttribute('aria-checked', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; });
     var root = $('#cz-wv');
     var glass = settings.glass === 'clear' || settings.glass === 'frosted' ? settings.glass : 'none';
-    if (W.mount(root, state, config(), { glass: glass, places: null })) W.fit(root, 900, 900);
+    if (W.mount(root, state, config(), { glass: glass, places: null, darkText: backdrop === 'bright' })) W.fit(root, 900, 900);
     fitPreview();
     /* thumbnails: every style drawn with today's weather */
     var changed = false;

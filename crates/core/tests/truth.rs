@@ -447,19 +447,17 @@ fn a_notification_says_what_and_until_when() {
 
 // ---------------------------------------------------------------- measured where a station is near
 
-/// The Weather Service's list of the stations around downtown Chicago, in the shape it sends
-/// it: O'Hare airport just out of reach, a volunteer's station next door, Midway 16 km away.
+/// The Weather Service's list of the stations around downtown Chicago, as the Windows test run
+/// fetched it on 24 November 2026. The first entry is the service's own, in full. The next 29
+/// are cut down to what the run printed of each: identifier, position and height.
 fn station_list() -> Value {
-    let station = |id: &str, name: &str, lon: f64, lat: f64, metres: f64| {
-        json!({ "type": "Feature", "geometry": { "type": "Point", "coordinates": [lon, lat] },
-            "properties": { "@type": "wx:ObservationStation", "stationIdentifier": id, "name": name, "timeZone": "America/Chicago",
-                "elevation": { "unitCode": "wmoUnit:m", "value": metres } } })
-    };
-    json!({ "type": "FeatureCollection", "features": [
-        station("KORD", "Chicago, Chicago-O'Hare International Airport", -87.9047, 41.9786, 204.0),
-        station("E1234", "EW1234 Chicago", -87.62, 41.89, 182.0),
-        station("KMDW", "Chicago, Chicago Midway Airport", -87.7522, 41.7861, 188.0),
-    ] })
+    serde_json::from_str(include_str!("fixtures/stations-chicago.json")).unwrap()
+}
+
+/// Midway airport's report of 15:35 UTC that day, as the service sent it: 2°C with a dew point
+/// of -4°C, wind from 350° at 12.96 km/h without gusts, 103,555.77 Pa, ten miles of visibility.
+fn captured() -> Value {
+    serde_json::from_str(include_str!("fixtures/station-report-kmdw.json")).unwrap()
 }
 
 fn midway() -> Station {
@@ -470,15 +468,11 @@ fn value(unit: &str, value: Value, checked: &str) -> Value {
     json!({ "unitCode": format!("wmoUnit:{unit}"), "value": value, "qualityControl": checked })
 }
 
-/// A station report in the shape the Weather Service sends it: 3.9°C with a dew point of
-/// 1.1°C, wind from 250° at 16.56 km/h without gusts, 101,660 Pa, and ten miles of visibility.
+/// That report, as if it had been taken at another moment.
 fn report(taken: i64) -> Value {
-    let time = chrono::DateTime::from_timestamp_millis(taken).unwrap().format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
-    json!({ "type": "Feature", "properties": { "station": "https://api.weather.gov/stations/KMDW", "timestamp": time, "textDescription": "Light Rain",
-        "temperature": value("degC", json!(3.9), "V"), "dewpoint": value("degC", json!(1.1), "V"),
-        "windDirection": value("degree_(angle)", json!(250), "V"), "windSpeed": value("km_h-1", json!(16.56), "V"), "windGust": value("km_h-1", json!(null), "Z"),
-        "barometricPressure": value("Pa", json!(101660), "V"), "seaLevelPressure": value("Pa", json!(101690), "V"),
-        "visibility": value("m", json!(16093.44), "C"), "relativeHumidity": value("percent", json!(81.9), "V") } })
+    let mut r = captured();
+    r["properties"]["timestamp"] = json!(chrono::DateTime::from_timestamp_millis(taken).unwrap().format("%Y-%m-%dT%H:%M:%S+00:00").to_string());
+    r
 }
 
 /// The state with the given report, taken 14 minutes ago, laid over the usual two answers.
@@ -489,32 +483,55 @@ fn measured(report: &Value) -> Value {
 
 #[test]
 fn now_is_measured_where_an_official_station_is_near() {
-    let near = nearby_stations(&station_list(), 41.8858, -87.6181);
-    assert_eq!(near.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["KMDW"], "not the volunteer's station next door, not the airport 26 km away");
-    assert!((near[0].km - 15.7).abs() < 0.3, "{} km", near[0].km);
+    // Of the thirty stations nearest to downtown Chicago one is within reach: Midway airport,
+    // 16 km away. O'Hare, 26 km away, is not, and neither would a volunteer's station next door be.
+    let mut list = station_list();
+    assert_eq!(list["features"].as_array().unwrap().len(), 30);
+    list["features"].as_array_mut().unwrap().insert(0, json!({ "type": "Feature", "geometry": { "type": "Point", "coordinates": [-87.62, 41.89] },
+        "properties": { "stationIdentifier": "E1234", "name": "EW1234 Chicago", "elevation": { "unitCode": "wmoUnit:m", "value": 182 } } }));
+    let near = nearby_stations(&list, 41.8858, -87.6181);
+    assert_eq!(near.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["KMDW"]);
+    assert_eq!((near[0].name.as_str(), near[0].km.round(), near[0].elevation), ("Chicago, Chicago Midway Airport", 16.0, Some(188.0616)));
 
+    // The report, read twenty minutes after it was taken as on that run, whose own trace said:
+    // "35.6°F, dew point 24.8°F, wind 8.1 mph from 350°, 30.58 inHg, 10.00 mi".
+    let taken = chrono::DateTime::parse_from_rfc3339("2026-11-24T15:35:00+00:00").unwrap().timestamp_millis();
+    let reading = read_station(&captured(), &near[0], taken + 20 * 60_000).unwrap();
+    let to = |places: i32, v: f64| (v * 10f64.powi(places)).round() / 10f64.powi(places);
+    let wind = reading.wind.as_ref().unwrap();
+    assert_eq!((reading.at, to(1, reading.temp), reading.dew.map(|d| to(1, d))), (taken, 35.6, Some(24.8)));
+    assert_eq!((to(1, wind.speed), wind.from, wind.gust), (8.1, Some(350.0), None));
+    assert_eq!((reading.pressure.map(|p| to(2, p)), reading.visibility.map(|v| to(2, v))), (Some(30.58), Some(10.0)));
+
+    // On screen, with the same report taken 14 minutes ago.
     let s = measured(&report(NOW - 14 * 60_000));
     let c = &s["current"];
-    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(34), Some(82)));
-    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].as_str(), c["windGust"].is_null()), (Some(10), Some("WSW"), true));
-    assert_eq!((c["pressure"].as_f64(), c["visibility"].as_f64()), (Some(30.02), Some(10.0)));
-    assert_eq!(c["feelsLike"], 32, "wind chill from the measured temperature and the measured wind");
-    assert_eq!(c["feelsLike"], feels_like(39.02, Some(16.56 / 1.609344), Some(82.0)).round() as i64);
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(36), Some(25), Some(64)));
+    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].as_str(), c["windGust"].is_null()), (Some(8), Some("N"), true));
+    assert_eq!((c["pressure"].as_f64(), c["visibility"].as_f64()), (Some(30.58), Some(10.0)));
+    assert_eq!(c["feelsLike"], 29, "wind chill from the measured temperature and the measured wind");
+    assert_eq!(c["feelsLike"], feels_like(35.6, Some(12.96 / 1.609344), Some(64.0)).round() as i64);
+    // What this app works out from the report agrees with the service's own figures for it.
+    let theirs = |key: &str| captured()["properties"][key]["value"].as_f64().unwrap();
+    assert_eq!(c["humidity"], theirs("relativeHumidity").round() as i64);
+    assert_eq!(c["feelsLike"], (theirs("windChill") * 1.8 + 32.0).round() as i64);
     assert_eq!((c["observedAt"].as_str(), c["station"]["id"].as_str(), c["station"]["name"].as_str()), (Some("2026-11-18T19:53:00.000Z"), Some("KMDW"), Some("Chicago, Chicago Midway Airport")));
-    assert_eq!(c["station"]["miles"], 9.8);
+    assert_eq!(c["station"]["miles"], 10.0);
 
     // Everything else on screen follows the measured temperature.
     assert_now_row_matches(&s);
-    assert_eq!((s["today"]["high"].as_i64(), s["today"]["low"].as_i64()), (Some(57), Some(39)), "the day's range contains what is measured now");
+    assert_eq!((s["today"]["high"].as_i64(), s["today"]["low"].as_i64()), (Some(57), Some(36)), "the day's range contains what is measured now");
     assert_eq!(advance(&s, NOW), None);
     assert_eq!(s["sources"], json!({ "nws": true, "openMeteo": true, "alerts": true }));
 }
 
 #[test]
 fn the_sky_words_stay_with_the_source_that_times_the_rain() {
-    // The station said "Light Rain" 14 minutes ago; the 15-minute steps say it is dry. Only one
-    // of the two is shown, so the words can never argue with the rain heads-up beside them.
-    let (modelled, s) = (state(Some(&nws(NOW)), Some(&open_meteo(NOW)), NOW), measured(&report(NOW - 14 * 60_000)));
+    // Say the station called it "Light Rain" 14 minutes ago while the 15-minute steps say it is
+    // dry. Only one of the two is shown, so the words can never argue with the rain heads-up beside them.
+    let mut r = report(NOW - 14 * 60_000);
+    r["properties"]["textDescription"] = json!("Light Rain");
+    let (modelled, s) = (state(Some(&nws(NOW)), Some(&open_meteo(NOW)), NOW), measured(&r));
     for key in ["condition", "icon", "isDay", "uvIndex"] {
         assert_eq!(s["current"][key], modelled["current"][key], "{key}");
     }
@@ -543,7 +560,7 @@ fn a_report_stands_for_now_only_while_it_is_fresh() {
     // From then on nothing on screen is called measured.
     let s = measured(&report(NOW - 14 * 60_000));
     let later = advance(&s, NOW + 40 * 60_000).unwrap();
-    assert_eq!((later["current"]["temp"].as_i64(), later["current"]["observedAt"].as_str()), (Some(39), Some("2026-11-18T19:53:00.000Z")));
+    assert_eq!((later["current"]["temp"].as_i64(), later["current"]["observedAt"].as_str()), (Some(36), Some("2026-11-18T19:53:00.000Z")));
     let later = advance(&s, NOW + 91 * 60_000).unwrap();
     assert_eq!(later["current"]["temp"], 54);
     assert!(later["current"]["observedAt"].is_null() && later["current"]["station"].is_null() && later["current"]["pressure"].is_null());
@@ -592,10 +609,10 @@ fn a_value_the_service_turned_down_is_not_shown() {
 #[test]
 fn a_unit_this_app_does_not_know_is_never_guessed() {
     let station = midway();
-    // The service used to send the wind in metres per second: 4.6 m/s is 10 mph too.
+    // The service used to send the wind in metres per second: 3.6 m/s is 8 mph too.
     let mut r = report(NOW);
-    r["properties"]["windSpeed"] = json!({ "unitCode": "unit:m_s-1", "value": 4.6, "qualityControl": "V" });
-    assert_eq!(read_station(&r, &station, NOW).unwrap().wind.unwrap().speed.round(), 10.0);
+    r["properties"]["windSpeed"] = json!({ "unitCode": "unit:m_s-1", "value": 3.6, "qualityControl": "V" });
+    assert_eq!(read_station(&r, &station, NOW).unwrap().wind.unwrap().speed.round(), 8.0);
     r["properties"]["windSpeed"] = value("kn", json!(9), "V");
     r["properties"]["barometricPressure"] = value("hPa", json!(1016.6), "V");
     r["properties"]["visibility"] = value("km", json!(16), "V");
@@ -615,18 +632,18 @@ fn what_a_station_leaves_out_stays_in_step_with_what_it_reports() {
     let mut r = report(NOW - 14 * 60_000);
     r["properties"]["dewpoint"]["value"] = json!(null);
     let c = measured(&r)["current"].clone();
-    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(31), Some(73)));
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(36), Some(31), Some(83)));
     // A modelled dew point above the measured temperature would be fog that is not there.
     let mut o = open_meteo(NOW);
     o["hourly"]["dew_point_2m"] = json!(vec![45.0; 72]);
     let reading = read_station(&r, &midway(), NOW).unwrap();
     let c = build_state(&place(), Some(&nws(NOW)), Some(&o), Some(&reading), NOW, &Value::Null).unwrap()["current"].clone();
-    assert_eq!((c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(100)));
+    assert_eq!((c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(36), Some(100)));
     // The same when the station itself reports a dew point a hair above its temperature.
     let mut r = report(NOW - 14 * 60_000);
-    r["properties"]["dewpoint"]["value"] = json!(4.0);
+    r["properties"]["dewpoint"]["value"] = json!(2.1);
     let c = measured(&r)["current"].clone();
-    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(39), Some(39), Some(100)));
+    assert_eq!((c["temp"].as_i64(), c["dewPoint"].as_i64(), c["humidity"].as_i64()), (Some(36), Some(36), Some(100)));
 
     // No wind from the station: the model's wind stays as one set (speed, direction and gusts),
     // and the wind chill is worked out from the measured temperature and that wind.
@@ -634,13 +651,13 @@ fn what_a_station_leaves_out_stays_in_step_with_what_it_reports() {
     r["properties"]["windSpeed"]["value"] = json!(null);
     let c = measured(&r)["current"].clone();
     assert_eq!((c["windSpeed"].as_i64(), c["windDir"].as_str(), c["windGust"].as_i64()), (Some(6), Some("W"), Some(12)));
-    assert_eq!(c["feelsLike"], feels_like(39.02, Some(6.0), None).round() as i64);
+    assert_eq!(c["feelsLike"], feels_like(35.6, Some(6.0), None).round() as i64);
     // Calm air comes from nowhere and chills nothing.
     let mut r = report(NOW - 14 * 60_000);
     r["properties"]["windSpeed"]["value"] = json!(0);
     r["properties"]["windDirection"]["value"] = json!(0);
     let c = measured(&r)["current"].clone();
-    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].is_null(), c["windGust"].is_null(), c["feelsLike"].as_i64()), (Some(0), true, true, Some(39)));
+    assert_eq!((c["windSpeed"].as_i64(), c["windDir"].is_null(), c["windGust"].is_null(), c["feelsLike"].as_i64()), (Some(0), true, true, Some(36)));
     // Gusts are reported only when there are any.
     let mut r = report(NOW - 14 * 60_000);
     r["properties"]["windGust"] = value("km_h-1", json!(40.7), "V");
@@ -662,7 +679,7 @@ fn what_a_station_leaves_out_stays_in_step_with_what_it_reports() {
     // Without Open-Meteo the station is laid over the forecast for the hour instead.
     let reading = read_station(&report(NOW - 14 * 60_000), &midway(), NOW).unwrap();
     let s = build_state(&place(), Some(&nws(NOW)), None, Some(&reading), NOW, &Value::Null).unwrap();
-    assert_eq!((s["current"]["temp"].as_i64(), s["current"]["condition"].as_str(), s["current"]["uvIndex"].is_null()), (Some(39), Some("Sunny"), true));
+    assert_eq!((s["current"]["temp"].as_i64(), s["current"]["condition"].as_str(), s["current"]["uvIndex"].is_null()), (Some(36), Some("Sunny"), true));
     assert_now_row_matches(&s);
 }
 
@@ -680,7 +697,7 @@ fn a_station_up_the_mountain_does_not_speak_for_the_valley() {
     assert_eq!(ground_elevation(None, None), None);
     // A height given in feet is not read as metres.
     let mut list = station_list();
-    list["features"][2]["properties"]["elevation"] = json!({ "unitCode": "wmoUnit:ft", "value": 617 });
+    list["features"][0]["properties"]["elevation"] = json!({ "unitCode": "wmoUnit:ft", "value": 617 });
     assert_eq!(nearby_stations(&list, 41.8858, -87.6181)[0].elevation, None);
 }
 

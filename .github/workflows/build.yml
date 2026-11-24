@@ -253,24 +253,8 @@ jobs:
           if ($dock.HasExited) { Write-Error "WeathaDock (taskbar placement, mouse battery on) exited early with code $($dock.ExitCode)"; exit 1 }
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { "TRACE $_" }
-          # Where "now" was measured, next to what the Weather Service itself says for the same
-          # place, so the app's line can be held against the service's own answers.
-          $measured = @(Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(stations in reach|now):' })
-          $measured | ForEach-Object { "STATION $_" }
-          $ask = {
-            param($url)
-            $answer = Invoke-WebRequest $url -TimeoutSec 30 -UserAgent 'WeathaDockDesktop/1.1 (desktop weather widget)' -Headers @{ Accept = 'application/geo+json' }
-            $text = if ($answer.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($answer.Content) } else { $answer.Content }
-            $text | ConvertFrom-Json
-          }
-          try {
-            $list = & $ask (& $ask 'https://api.weather.gov/points/41.8858,-87.6181').properties.observationStations
-            "STATION LIST of $($list.features.Count): " + (($list.features | Select-Object -First 30 | ForEach-Object { "$($_.properties.stationIdentifier) $($_.geometry.coordinates -join ',') $([int]$_.properties.elevation.value) m" }) -join '; ')
-            "STATION ENTRY " + ($list.features[0] | ConvertTo-Json -Depth 6 -Compress)
-            if (($measured -join ' ') -cmatch 'stations in reach: ([A-Z][A-Z0-9]{3}) \d') {
-              "STATION REPORT " + (& $ask "https://api.weather.gov/stations/$($Matches[1])/observations/latest" | ConvertTo-Json -Depth 6 -Compress)
-            }
-          } catch { "STATION LIST not available: $($_.Exception.Message)" }
+          # Where "now" was measured: the stations in reach and what the app read at the nearest.
+          Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(stations in reach|now):' } | ForEach-Object { "STATION $_" }
           $env:WEATHADOCK_LOG = $null
           if ($back -notmatch '\d on top; ') { Write-Error "After the taskbar emptied again, the docked strip did not come back."; exit 1 }
           # Fourth run: a desktop widget set to stay above other windows. Once a full-screen

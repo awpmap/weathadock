@@ -952,11 +952,13 @@ fn start_backdrop_watch(app: &AppHandle) {
             std::thread::sleep(BACKDROP_EVERY);
             let started = std::time::Instant::now();
             check_backdrop_now(&app);
-            (looks, spent) = (looks + 1, spent + started.elapsed());
-            if looks == 5 {
-                // For the troubleshooting log: what the looking costs.
-                trace(format!("wallpaper looked at {looks} times in {:.1} ms", spent.as_secs_f64() * 1000.0));
-                (looks, spent) = (0, Duration::ZERO);
+            let took = started.elapsed();
+            // For the troubleshooting log, once: what the first looks behind a widget cost.
+            if looks < 5 && widget_enabled(&app) {
+                (looks, spent) = (looks + 1, spent + took);
+                if looks == 5 {
+                    trace(format!("wallpaper looked at {looks} times in {:.1} ms", spent.as_secs_f64() * 1000.0));
+                }
             }
         }
     });
@@ -1703,8 +1705,12 @@ fn log_crashes(dir: &PathBuf, version: String) {
 fn trace(line: String) {
     if let Ok(path) = std::env::var("WEATHADOCK_LOG") {
         use std::io::Write;
+        // Several threads report here. Each line goes out whole, in one write and one thread at
+        // a time, so that no line can land in the middle of another.
+        static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+        let _turn = ONE_AT_A_TIME.lock();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{line}");
+            let _ = f.write_all(format!("{line}\n").as_bytes());
         }
     }
 }

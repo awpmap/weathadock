@@ -1,6 +1,6 @@
 /* WeathaDock widget renderer styles. Scoped to .wv so the same rules drive the desktop widget
    and the live preview inside the detail window. Attributes on .wv:
-   data-glass none|clear|frosted · data-ink light|dark · data-orient · data-align · data-size · data-mode block|inline|state */
+   data-glass none|clear|frosted · data-ink light|dark ("auto" is resolved to one of the two before it gets here) · data-orient · data-align · data-size · data-mode block|inline|state */
 
 .wv {
   position: relative; display: block; width: max-content; max-width: 100%;

@@ -21,7 +21,7 @@
       orientation: pick(c.orientation, ['vertical', 'horizontal'], 'vertical'),
       size: pick(c.size, ['small', 'medium', 'large', 'xlarge'], 'medium'),
       align: pick(c.align, ['left', 'center', 'right'], 'left'),
-      ink: pick(c.ink, ['light', 'dark'], 'light'),
+      ink: pick(c.ink, ['auto', 'light', 'dark'], 'auto'),
       hours: pick(Number(c.hours), [4, 6, 8, 12], 6),
       days: pick(Number(c.days), [3, 5, 7], 5),
       show: show
@@ -309,12 +309,15 @@
     var c = normalize(cfg), r = build(state, c, opts);
     var glass = pick(opts.glass, ['none', 'clear', 'frosted'], 'none');
     var z = ZOOM[c.size] || 1;
-    var sig = [glass, c.orientation, c.size, c.align, c.ink, r.mode, r.minW, opts.pending ? 1 : 0, r.html].join('|');
+    /* "auto": light or dark text, whichever the wallpaper behind the widget calls for
+       (opts.darkText). On a glass background the text sits on the glass, which is made for light text. */
+    var ink = c.ink !== 'auto' ? c.ink : (glass === 'none' && opts.darkText ? 'dark' : 'light');
+    var sig = [glass, c.orientation, c.size, c.align, ink, r.mode, r.minW, opts.pending ? 1 : 0, r.html].join('|');
     var changed = root.__wvSig !== sig;
     if (changed) {
       root.__wvSig = sig;
       root.classList.add('wv');
-      root.dataset.glass = glass; root.dataset.ink = c.ink; root.dataset.orient = c.orientation;
+      root.dataset.glass = glass; root.dataset.ink = ink; root.dataset.orient = c.orientation;
       root.dataset.align = c.align; root.dataset.size = c.size; root.dataset.mode = r.mode;
       var mt = getMetrics();
       root.style.setProperty('--wv-cap', mt.cap.toFixed(4)); root.style.setProperty('--wv-shift', mt.shift.toFixed(4));

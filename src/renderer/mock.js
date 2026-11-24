@@ -469,6 +469,8 @@
     onBattery: function () {},
     getDock: function () { return Promise.resolve({ room: Number(params.get('room') || 0), light: params.get('bar') === 'light' }); },
     onDock: function () {},
+    getBackdrop: function () { return Promise.resolve({ dark: params.get('backdrop') === 'bright' }); },
+    onBackdrop: function () {},
     showContextMenu: function () { window.__contextMenus = (window.__contextMenus || 0) + 1; log('showContextMenu'); },
     setContentSize: function (w, h) { window.__contentSize = { width: w, height: h }; log('setContentSize', w, h); },
     setTrayIcon: function (dataUrl) { window.__trayIcon = dataUrl; },

@@ -272,6 +272,60 @@ jobs:
           if ($top.HasExited) { Write-Error "WeathaDock (keep above other windows) exited early with code $($top.ExitCode)"; exit 1 }
           Stop-Process -Id $top.Id -Force -ErrorAction SilentlyContinue
           if ($after -notmatch '\d on top; ') { Write-Error "After a full-screen window closed, the widget set to stay above other windows was not back on screen and on top."; exit 1 }
+          # Fifth run: with the text colour on "Auto" (the default) the widget's text follows the
+          # wallpaper behind it. Each test wallpaper is half white and half black, so only the part
+          # behind the widget, which sits on the right, can decide: white there calls for dark
+          # text, black for light text, and the change must come by itself within seconds.
+          Add-Type -Namespace Smoke -Name Desk -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint action, uint param, string value, uint flags);'
+          $own = (Get-ItemProperty 'HKCU:\Control Panel\Desktop').WallPaper
+          $papers = @{}
+          foreach ($right in 'white', 'black') {
+            $paper = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($paper)
+            $g.Clear($(if ($right -eq 'white') { [System.Drawing.Color]::Black } else { [System.Drawing.Color]::White }))
+            $g.FillRectangle($(if ($right -eq 'white') { [System.Drawing.Brushes]::White } else { [System.Drawing.Brushes]::Black }), [int]($b.Width / 2), 0, $b.Width, $b.Height)
+            $g.Dispose()
+            $papers[$right] = Join-Path (Resolve-Path smoke).Path "wallpaper-$right-right.png"
+            $paper.Save($papers[$right])
+          }
+          $looks = { @(Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^wallpaper behind the widget' }) | Select-Object -Last 1 }
+          function Save-RightHalf($n) {
+            (New-Object -ComObject Shell.Application).MinimizeAll()
+            Start-Sleep -Seconds 2
+            $half = New-Object System.Drawing.Bitmap ([int]($b.Width / 2)), $b.Height
+            [System.Drawing.Graphics]::FromImage($half).CopyFromScreen([int]($b.Width / 2), 0, 0, 0, $half.Size)
+            $half.Save("smoke/backdrop$n.jpg", $jpeg, $q)
+            Write-Output "SCREENSHOT$n-BEGIN"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/backdrop$n.jpg")) -split '(.{4000})' | Where-Object { $_ }
+            Write-Output "SCREENSHOT$n-END"
+          }
+          [Smoke.Desk]::SystemParametersInfo(0x0014, 0, $papers['white'], 3) | Out-Null
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
+          $env:WEATHADOCK_LOG = Join-Path $env:TEMP 'weathadock-backdrop.log'
+          Remove-Item $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue
+          $auto = Start-Process -FilePath target/release/weathadock.exe -PassThru
+          Start-Sleep -Seconds 15
+          $onWhite = & $looks
+          "BACKDROP white behind the widget: $onWhite"
+          Save-RightHalf 10
+          [Smoke.Desk]::SystemParametersInfo(0x0014, 0, $papers['black'], 3) | Out-Null
+          Start-Sleep -Seconds 8
+          $onBlack = & $looks
+          "BACKDROP black behind the widget: $onBlack"
+          Save-RightHalf 11
+          # The desktop's own wallpaper again: a photograph, for the record and for the steps below.
+          [Smoke.Desk]::SystemParametersInfo(0x0014, 0, $own, 3) | Out-Null
+          Start-Sleep -Seconds 8
+          "BACKDROP the desktop's own wallpaper: " + (& $looks)
+          Save-RightHalf 12
+          # What looking at the wallpaper costs while nothing changes: the first five looks,
+          # all of them before the wallpaper was switched.
+          "BACKDROP cost: " + (Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^wallpaper looked at' } | Select-Object -First 1)
+          $env:WEATHADOCK_LOG = $null
+          if ($auto.HasExited) { Write-Error "WeathaDock (text colour following the wallpaper) exited early with code $($auto.ExitCode)"; exit 1 }
+          Stop-Process -Id $auto.Id -Force -ErrorAction SilentlyContinue
+          if ($onWhite -notmatch '-> dark text$') { Write-Error "On a white wallpaper the widget did not choose dark text."; exit 1 }
+          if ($onBlack -notmatch '-> light text$') { Write-Error "After the wallpaper turned black the widget did not go back to light text."; exit 1 }
       # Run the installer the way a person would (double-click, no flags) and record its
       # window while it works, then the desktop once the app has opened.
       - name: Installer screenshots

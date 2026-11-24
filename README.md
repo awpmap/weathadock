@@ -60,7 +60,7 @@ release yet.
 |---|---|
 | `src-tauri/src/main.rs` | Windows, tray, settings, refresh schedule, desktop/taskbar switching |
 | `src-tauri/src/net.rs` | Zip lookup and the weather requests |
-| `src-tauri/src/win32.rs` | Windows window-stack checks (is the widget covered?) |
+| `src-tauri/src/win32.rs` | Windows window-stack checks (is the widget covered?) and the wallpaper behind it |
 | `src-tauri/src/updater.rs` | In-app updates from GitHub Releases |
 | `src-tauri/src/bridge.js` | Connects the screens to the Rust side (`window.sky`) |
 | `crates/core/` | Merging of the weather sources and the settings model, with tests |
@@ -80,6 +80,10 @@ The same folder holds what helps when something goes wrong: `settings.backup.jso
 settings that loaded correctly, restored by the app itself if the main file is ever damaged; the
 damaged file is kept as `settings.damaged.json`) and `crash.log` (written only if the app stops
 unexpectedly). Like the settings, they stay on your PC.
+
+To choose between light and dark text by itself, the widget looks at how bright your wallpaper is
+behind it. The picture is read on your PC, nothing of it is stored, and nothing about it is sent
+anywhere.
 
 ## Tests
 

@@ -252,7 +252,7 @@ type WidgetConfig = {
   orientation: 'vertical' | 'horizontal'   // stack sections top to bottom, or flow them left to right
   size: 'small' | 'medium' | 'large' | 'xlarge'   // overall scale of the widget
   align: 'left' | 'center' | 'right'       // text/content alignment within the widget
-  ink: 'light' | 'dark'                    // light text for dark wallpapers, dark text (light halo) for bright ones
+  ink: 'auto' | 'light' | 'dark'           // light text for dark wallpapers, dark text (light halo) for bright ones; 'auto' (the default) picks between them, see the rules
   hours: 4 | 6 | 8 | 12                    // how many hours in the hourly strip
   days: 3 | 5 | 7                          // how many days in the daily list
   show: {                                  // every element is individually toggleable
@@ -281,6 +281,15 @@ Rules:
   with a LIVE PREVIEW of the widget that updates instantly, shown over a selectable sample
   backdrop (dark, bright, photo-like) so people can judge legibility. Changes apply to the real
   widget immediately. Include "Reset to preset".
+- Text colour `'auto'`: main works out how bright the wallpaper is behind the widget and says
+  whether it calls for dark text, as `{ dark: boolean }` from `sky.getBackdrop()` and through
+  `sky.onBackdrop(cb)` whenever the answer changes (the widget was moved or resized, the
+  wallpaper changed). The widget page waits for the first answer before it first draws, half a
+  second at most, so the text never starts in one colour and changes to the other.
+  `WDWidget.mount` takes the answer as `opts.darkText`. Only the transparent style uses it: on
+  the two glass styles the text sits on the glass, and `'auto'` stays light there. The preview
+  in Settings goes by its sample backdrop instead (dark text on the bright one), and the mock
+  answers dark with `?backdrop=bright`.
 - The taskbar pill is not affected by `widget` config.
 - Mock: add `widget` to mock settings and a `?widget=<url-encoded JSON>` design param.
 

@@ -29,6 +29,9 @@ use updater::Updater;
 const APP_NAME: &str = "WeathaDock";
 const COVERED_AT: f64 = 0.35; // the widget counts as covered when this share of it is hidden
 const TICK: Duration = Duration::from_millis(500);
+/// How often the wallpaper behind the widget is looked at. A look takes about a millisecond
+/// unless the wallpaper has changed.
+const BACKDROP_EVERY: Duration = Duration::from_secs(3);
 const BRIDGE: &str = include_str!("bridge.js");
 /// WebView2 switches, identical for every window (they share one browser process). The first
 /// group is Tauri's own default; the rest trims processes and background work a widget does not need.
@@ -83,12 +86,25 @@ struct Shared {
     /// steps aside and the tray icon carries the temperature until room returns.
     out_of_room: AtomicBool,
     taskbar_watch: Mutex<TaskbarWatch>,
+    backdrop: Mutex<Backdrop>,
     pending_section: Mutex<Option<String>>,
     covered: Mutex<Covered>,
     quitting: AtomicBool,
 }
 
 /// What the docked strip last saw of the taskbar, to notice when its buttons may have moved.
+/// What is behind the desktop widget, for text that chooses its own colour.
+#[derive(Default)]
+struct Backdrop {
+    /// The wallpaper picture read last: what told it apart (file, size, date) and its thumbnail.
+    #[cfg(windows)]
+    picture: Option<(String, win32::Thumbnail)>,
+    /// What the answer below was worked out for: the wallpaper's layout and the widget's place.
+    seen: String,
+    /// Whether the wallpaper behind the widget calls for dark text.
+    dark: bool,
+}
+
 #[derive(Default)]
 struct TaskbarWatch {
     seen: (Option<(i32, i32, i32, i32)>, u32),
@@ -860,6 +876,98 @@ fn create_widget_now(app: &AppHandle) {
     }
 }
 
+/// With the text colour on "Auto", the widget's text follows the wallpaper behind it: work
+/// out whether that is bright enough to call for dark text, and tell the widget when the
+/// answer changes. The answer is kept current whatever the text colour is set to, so that
+/// choosing "Auto" never shows the wrong colour first. Next to free unless the wallpaper or
+/// the widget's place has changed, and the picture itself is read only when it is a new one;
+/// that read can take a moment, so this is never called on the main thread.
+#[cfg(windows)]
+fn check_backdrop_now(app: &AppHandle) {
+    use weathadock_core::backdrop::{self, Area, Picture};
+    // No widget on the desktop (switched off, or docked on the taskbar): nothing to colour.
+    if !widget_enabled(app) {
+        return;
+    }
+    let Some(place) = window(app, "widget").and_then(|w| win32::handle_of(&w)).and_then(win32::rect) else { return };
+    let Some(wallpaper) = win32::wallpaper_at(place) else { return };
+    let file = std::fs::metadata(&wallpaper.path).ok().map(|m| (m.len(), m.modified().ok()));
+    let picture_key = format!("{} {file:?}", wallpaper.path);
+    let seen = format!("{wallpaper:?} {file:?} {place:?}");
+    let st = shared(app);
+    let known = {
+        let b = st.backdrop.lock().unwrap();
+        if b.seen == seen {
+            return;
+        }
+        b.picture.as_ref().filter(|p| p.0 == picture_key).map(|p| p.1.clone())
+    };
+    let thumbnail = if wallpaper.path.is_empty() {
+        None // a plain colour, no picture
+    } else {
+        let Some(read) = known.or_else(|| win32::thumbnail(&wallpaper.path)) else {
+            // The text stays as it is. Not tried again until something changes: a file that
+            // was only half written is a different file (size, date) once it is whole.
+            trace("wallpaper behind the widget: the picture could not be read".into());
+            st.backdrop.lock().unwrap().seen = seen;
+            return;
+        };
+        Some(read)
+    };
+    let area = |r: win32::Rect| Area { left: r.left as f64, top: r.top as f64, right: r.right as f64, bottom: r.bottom as f64 };
+    let picture = thumbnail.as_ref().map(|t| Picture { pixels: &t.pixels, width: t.width, height: t.height, natural: t.natural });
+    let brightness = backdrop::brightness_behind(picture.as_ref(), wallpaper.fit, wallpaper.colour, area(wallpaper.screen), area(place));
+    let (dark, changed) = {
+        let mut b = st.backdrop.lock().unwrap();
+        let dark = backdrop::dark_text(brightness, b.dark);
+        let changed = dark != b.dark;
+        b.seen = seen;
+        b.dark = dark;
+        b.picture = thumbnail.map(|t| (picture_key, t));
+        (dark, changed)
+    };
+    trace(format!("wallpaper behind the widget: {:?}, brightness {brightness:.2} -> {} text", wallpaper.fit, if dark { "dark" } else { "light" }));
+    if changed {
+        let _ = app.emit("sky:backdrop", backdrop_info(app));
+    }
+}
+
+#[cfg(not(windows))]
+fn check_backdrop_now(_app: &AppHandle) {}
+
+fn check_backdrop(app: &AppHandle) {
+    off_main(app, check_backdrop_now);
+}
+
+/// A wallpaper can change at any time (a slideshow, a new picture, another desktop colour),
+/// and nothing announces it: look every few seconds.
+fn start_backdrop_watch(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        // Kept for the life of the thread, so each look does not start the machinery again.
+        #[cfg(windows)]
+        let _com = win32::Com::start();
+        let (mut looks, mut spent) = (0, Duration::ZERO);
+        loop {
+            std::thread::sleep(BACKDROP_EVERY);
+            let started = std::time::Instant::now();
+            check_backdrop_now(&app);
+            let took = started.elapsed();
+            // For the troubleshooting log, once: what the first looks behind a widget cost.
+            if looks < 5 && widget_enabled(&app) {
+                (looks, spent) = (looks + 1, spent + took);
+                if looks == 5 {
+                    trace(format!("wallpaper looked at {looks} times in {:.1} ms", spent.as_secs_f64() * 1000.0));
+                }
+            }
+        }
+    });
+}
+
+fn backdrop_info(app: &AppHandle) -> Value {
+    json!({ "dark": shared(app).backdrop.lock().unwrap().dark })
+}
+
 fn show_widget(app: &AppHandle) {
     let Some(w) = window(app, "widget") else { return };
     let on_top = flag(app, "widgetOnTop");
@@ -1289,6 +1397,9 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
         let _ = app.emit("sky:battery", battery_info(app));
         check_battery(app, true);
     }
+    if changed("showWidget") {
+        check_backdrop(app); // nobody looked at the wallpaper while the widget was off
+    }
     publish_settings(app);
 }
 
@@ -1505,6 +1616,9 @@ fn drag_end(app: AppHandle, window: WebviewWindow) {
         let key = if label == "widget" { "widgetPos" } else { "pillPos" };
         store(&app, |d| d[key] = json!({ "x": p.x, "y": p.y }));
     }
+    if label == "widget" {
+        check_backdrop(&app); // another part of the wallpaper is behind it now
+    }
 }
 
 #[tauri::command]
@@ -1532,6 +1646,7 @@ fn set_content_size(app: AppHandle, window: WebviewWindow, width: f64, height: f
                 }
             }
             let _ = window.set_size(PhysicalSize::new(next.0, next.1));
+            check_backdrop(&app);
         }
         "pill" => {
             let room = st.dock.lock().unwrap().0;
@@ -1591,8 +1706,12 @@ fn log_crashes(dir: &PathBuf, version: String) {
 pub(crate) fn trace(line: String) {
     if let Ok(path) = std::env::var("WEATHADOCK_LOG") {
         use std::io::Write;
+        // Several threads report here. Each line goes out whole, in one write and one thread at
+        // a time, so that no line can land in the middle of another.
+        static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+        let _turn = ONE_AT_A_TIME.lock();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{line}");
+            let _ = f.write_all(format!("{line}\n").as_bytes());
         }
     }
 }
@@ -1619,6 +1738,14 @@ fn get_battery_log(app: AppHandle) -> String {
         text.push('\n');
     }
     text
+}
+
+/// Whether the wallpaper behind the widget calls for dark text (text colour "Auto"). The
+/// widget's page asks before it first draws: look now, off the main thread.
+#[tauri::command(async)]
+fn get_backdrop(app: AppHandle) -> Value {
+    check_backdrop_now(&app);
+    backdrop_info(&app)
 }
 
 #[tauri::command]
@@ -1662,7 +1789,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state, get_settings, set_settings, get_locations, lookup_zip, add_location, remove_location,
             set_active_location, complete_setup, refresh_now, open_detail_cmd, take_pending_section, window_control,
-            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_battery, get_battery_log, get_update_state,
+            window_drag, move_by, drag_end, set_content_size, set_tray_icon, show_context_menu, get_dock, get_backdrop, get_battery, get_battery_log, get_update_state,
             check_for_updates, install_update, quit_cmd
         ])
         .setup(|app| {
@@ -1690,6 +1817,7 @@ fn main() {
                 dock: Mutex::new((0, false)),
                 out_of_room: AtomicBool::new(false),
                 taskbar_watch: Mutex::new(TaskbarWatch::default()),
+                backdrop: Mutex::new(Backdrop::default()),
                 battery: Mutex::new(None),
                 battery_smooth: Mutex::new(Default::default()),
                 battery_tried: Mutex::new(0),
@@ -1718,6 +1846,7 @@ fn main() {
             start_scheduler(&handle);
             check_battery(&handle, true);
             start_ticking(&handle);
+            start_backdrop_watch(&handle);
             // Look for updates shortly after launch and then every six hours.
             let updates = handle.clone();
             tauri::async_runtime::spawn(async move {

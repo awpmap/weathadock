@@ -107,16 +107,19 @@ pub fn brightness_behind(picture: Option<&Picture>, fit: Fit, colour: [u8; 3], s
 }
 
 /// Whether the widget should use dark text: yes once the desktop behind it is on the bright
-/// side, no once it is on the dark side, and whatever it uses now in the band between, so a
-/// wallpaper near the middle (or a slideshow moving through it) does not make the text flip
-/// back and forth.
+/// side, no once it is on the dark side, and whatever it uses now in the narrow band between,
+/// so that a wallpaper right at the middle does not make the text flip back and forth each
+/// time the widget changes size by a few pixels.
 ///
-/// The band sits around the lightness at which black and white text stand out equally (0.46):
-/// on a mid blue sky of 0.58, white text has a contrast of 2.9 to 1 and black text 7.3 to 1.
+/// The middle is where it is for two reasons. On an even backdrop black and white text stand
+/// out equally at a lightness of 0.46, and above that black wins quickly: on a mid blue sky of
+/// 0.58, white text has a contrast of 2.9 to 1 and black text 7.3 to 1. And the light Windows
+/// 11 wallpaper measures 0.45 behind a widget in the top right corner, pale at the top and
+/// deep blue below, where light text is the better choice by far.
 pub fn dark_text(brightness: f64, dark_now: bool) -> bool {
-    if brightness >= 0.55 {
+    if brightness >= 0.53 {
         true
-    } else if brightness <= 0.45 {
+    } else if brightness <= 0.47 {
         false
     } else {
         dark_now
@@ -227,8 +230,10 @@ mod tests {
 
     #[test]
     fn the_text_changes_only_when_the_wallpaper_is_clearly_bright_or_clearly_not() {
-        assert!(dark_text(0.8, false) && dark_text(0.55, false));
-        assert!(!dark_text(0.2, true) && !dark_text(0.45, true));
+        assert!(dark_text(0.8, false) && dark_text(0.53, false));
+        assert!(!dark_text(0.2, true) && !dark_text(0.47, true));
+        // The light Windows 11 wallpaper (0.45) and a mid blue sky (0.58), whatever came before.
+        assert!(!dark_text(0.45, true) && dark_text(0.58, false));
         // In between it stays as it is, whichever that is.
         assert!(dark_text(0.5, true) && !dark_text(0.5, false));
         assert!(!dark_text(f64::NAN, false));

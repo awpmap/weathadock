@@ -1701,8 +1701,9 @@ fn log_crashes(dir: &PathBuf, version: String) {
     }));
 }
 
-/// Troubleshooting aid: when WEATHADOCK_LOG names a file, placement decisions are appended to it.
-fn trace(line: String) {
+/// Troubleshooting aid: when WEATHADOCK_LOG names a file, placement decisions and the station
+/// behind the current conditions are appended to it.
+pub(crate) fn trace(line: String) {
     if let Ok(path) = std::env::var("WEATHADOCK_LOG") {
         use std::io::Write;
         // Several threads report here. Each line goes out whole, in one write and one thread at

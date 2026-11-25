@@ -1,3 +1,11 @@
+## WeathaDock 1.1.20
+
+Two more improvements from 1.1.16 come back. Where the weather sits on the taskbar still works exactly as in 1.1.15.
+
+**Measured, not modeled.** Where an official weather station is close by (an airport's, as a rule), the temperature, humidity, wind, pressure and visibility are now the ones it measured, and the WeathaDock window says where and when. Everywhere else the app works as before.
+
+**Readable on any wallpaper.** The desktop widget's text now picks light or dark by itself from the wallpaper behind it, and follows when you move the widget or change the picture. Customize has a new Text color choice, Auto, which is the default; Light and Dark work as before.
+
 ## WeathaDock 1.1.19
 
 The first of the improvements from 1.1.16 come back, built on the steady 1.1.15. Nothing about where the weather sits on the taskbar or the desktop changes.

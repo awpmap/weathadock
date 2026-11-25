@@ -1,8 +1,10 @@
 //! Windows-only window-stack helpers. They answer "is the desktop widget covered by other
-//! windows?", keep the widget at desktop level, and locate the taskbar's tray area.
+//! windows?", keep the widget at desktop level, locate the taskbar's tray area, and read the
+//! desktop wallpaper behind the widget.
 #![cfg(windows)]
 
-use windows::core::{w, PCWSTR};
+use weathadock_core::backdrop::Fit;
+use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -18,7 +20,7 @@ fn hwnd(h: Handle) -> HWND {
     HWND(h as *mut core::ffi::c_void)
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
@@ -97,6 +99,11 @@ fn rect_of(h: HWND, visible_bounds: bool) -> Option<Rect> {
         }
     }
     Some(Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+}
+
+/// Where a window is on the screen (physical px).
+pub fn rect(h: Handle) -> Option<Rect> {
+    rect_of(hwnd(h), false)
 }
 
 fn class_of(h: HWND) -> String {
@@ -287,4 +294,143 @@ pub fn taskbar_is_light() -> bool {
     }
     // Windows is light unless the value says otherwise (a missing value means the default, light).
     value == 1
+}
+
+// ---------------------------------------------------------------- the wallpaper
+
+/// The desktop wallpaper on one screen: the picture's file (empty when there is none), how
+/// Windows lays it out, the desktop colour around it, and the screen it covers (physical px).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wallpaper {
+    pub path: String,
+    pub fit: Fit,
+    pub colour: [u8; 3],
+    pub screen: Rect,
+}
+
+/// A wallpaper picture shrunk to a thumbnail: red, green, blue and one unused byte for each
+/// pixel, row by row, and the size of the picture file itself.
+#[derive(Clone)]
+pub struct Thumbnail {
+    pub pixels: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+    pub natural: (f64, f64),
+}
+
+/// COM for the calling thread, given back when this goes out of scope. Declare it before
+/// anything COM hands out, so that those are let go first.
+pub struct Com(bool);
+
+impl Com {
+    pub fn start() -> Com {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        Com(unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok())
+    }
+}
+
+impl Drop for Com {
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { windows::Win32::System::Com::CoUninitialize() };
+        }
+    }
+}
+
+/// Copy a string the shell allocated, with its closing zero, and give the memory back.
+unsafe fn take(text: PWSTR) -> Vec<u16> {
+    if text.is_null() {
+        return vec![0];
+    }
+    let mut copy = unsafe { text.as_wide() }.to_vec();
+    copy.push(0);
+    unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(text.0 as *const core::ffi::c_void)) };
+    copy
+}
+
+/// The wallpaper of the screen a rectangle is on. `None` when Windows will not say.
+/// Asks the shell, which takes a millisecond or two; call it off the main thread.
+pub fn wallpaper_at(area: Rect) -> Option<Wallpaper> {
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper, DWPOS_CENTER, DWPOS_FIT, DWPOS_SPAN, DWPOS_STRETCH, DWPOS_TILE};
+    unsafe {
+        let _com = Com::start();
+        let desktop: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL).ok()?;
+        let mut screens: Vec<(Vec<u16>, Rect)> = Vec::new();
+        for i in 0..desktop.GetMonitorDevicePathCount().ok()? {
+            let Ok(id) = desktop.GetMonitorDevicePathAt(i) else { continue };
+            let id = take(id);
+            // A monitor that is listed but not attached has no rectangle.
+            if let Ok(r) = desktop.GetMonitorRECT(PCWSTR(id.as_ptr())) {
+                if r.right > r.left && r.bottom > r.top {
+                    screens.push((id, Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }));
+                }
+            }
+        }
+        let (x, y) = ((area.left + area.right) / 2, (area.top + area.bottom) / 2);
+        let (id, mut screen) = screens.iter().find(|(_, r)| x >= r.left && x < r.right && y >= r.top && y < r.bottom).or(screens.first())?.clone();
+        let position = desktop.GetPosition().ok()?;
+        let fit = if position == DWPOS_CENTER {
+            Fit::Center
+        } else if position == DWPOS_TILE {
+            Fit::Tile
+        } else if position == DWPOS_STRETCH {
+            Fit::Stretch
+        } else if position == DWPOS_FIT {
+            Fit::Fit
+        } else if position == DWPOS_SPAN {
+            Fit::Span
+        } else {
+            Fit::Fill
+        };
+        if fit == Fit::Span {
+            // One picture across every screen: it is laid out over all of them together.
+            for (_, r) in &screens {
+                screen = Rect { left: screen.left.min(r.left), top: screen.top.min(r.top), right: screen.right.max(r.right), bottom: screen.bottom.max(r.bottom) };
+            }
+        }
+        let path = take(desktop.GetWallpaper(PCWSTR(id.as_ptr())).ok()?);
+        let colour = desktop.GetBackgroundColor().ok()?.0;
+        Some(Wallpaper {
+            path: String::from_utf16_lossy(&path[..path.len() - 1]),
+            fit,
+            colour: [colour as u8, (colour >> 8) as u8, (colour >> 16) as u8],
+            screen,
+        })
+    }
+}
+
+/// Read a picture file down to a thumbnail at most 96 pixels across, with the decoders Windows
+/// itself has (so every format a wallpaper can be in). `None` when it cannot be read.
+pub fn thumbnail(path: &str) -> Option<Thumbnail> {
+    use windows::Win32::Foundation::GENERIC_READ;
+    use windows::Win32::Graphics::Imaging::{
+        CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA, IWICImagingFactory, IWICPalette, WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant,
+        WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    unsafe {
+        let _com = Com::start();
+        let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
+        let file: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+        let frame = factory.CreateDecoderFromFilename(PCWSTR(file.as_ptr()), None, GENERIC_READ, WICDecodeMetadataCacheOnDemand).ok()?.GetFrame(0).ok()?;
+        let (mut wide, mut high) = (0u32, 0u32);
+        frame.GetSize(&mut wide, &mut high).ok()?;
+        if wide == 0 || high == 0 {
+            return None;
+        }
+        let shrink = (96.0 / wide.max(high) as f64).min(1.0);
+        let (width, height) = (((wide as f64 * shrink).round() as u32).max(1), ((high as f64 * shrink).round() as u32).max(1));
+        let scaler = factory.CreateBitmapScaler().ok()?;
+        scaler.Initialize(&frame, width, height, WICBitmapInterpolationModeFant).ok()?;
+        let converter = factory.CreateFormatConverter().ok()?;
+        converter.Initialize(&scaler, &GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, None::<&IWICPalette>, 0.0, WICBitmapPaletteTypeCustom).ok()?;
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        converter.CopyPixels(std::ptr::null(), width * 4, &mut pixels).ok()?;
+        // Windows hands the colours over blue first.
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        Some(Thumbnail { pixels, width: width as usize, height: height as usize, natural: (wide as f64, high as f64) })
+    }
 }

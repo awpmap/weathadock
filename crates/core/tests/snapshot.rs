@@ -44,10 +44,11 @@ fn builds_the_recorded_states() {
             daily: n["daily"].as_array().unwrap().clone(),
             hourly: n["hourly"].as_array().unwrap().clone(),
             alerts: Some(n["alerts"].as_array().unwrap().clone()),
+            elevation: None,
         });
         let om = (!case["om"].is_null()).then(|| &case["om"]);
         let previous = json!({ "alerts": case["previousAlerts"] });
-        let got = build_state(&case["loc"], nws.as_ref(), om, case["now"].as_i64().unwrap(), &previous).unwrap();
+        let got = build_state(&case["loc"], nws.as_ref(), om, None, case["now"].as_i64().unwrap(), &previous).unwrap();
         if bless {
             case["expected"] = got;
             continue;

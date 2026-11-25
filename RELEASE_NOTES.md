@@ -1,3 +1,9 @@
+## WeathaDock 1.1.20
+
+One more improvement from 1.1.16 comes back. Where the weather sits on the taskbar still works exactly as in 1.1.15.
+
+**Measured, not modeled.** Where an official weather station is close by (an airport's, as a rule), the temperature, humidity, wind, pressure and visibility are now the ones it measured, and the WeathaDock window says where and when. Everywhere else the app works as before.
+
 ## WeathaDock 1.1.19
 
 The first of the improvements from 1.1.16 come back, built on the steady 1.1.15. Nothing about where the weather sits on the taskbar or the desktop changes.

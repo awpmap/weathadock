@@ -373,3 +373,31 @@ What main guarantees, and what the pages must keep to:
   `expires` only says when that message is due to be replaced and is never shown as the end.
   While `sources.alerts` is false, never say "No active alerts".
 - Detail window keyboard: Ctrl+1..6 follow the order of the sidebar.
+
+## Revision 8: measured where a station is near
+
+`current` gains two fields. Both are null unless a station's report is behind the numbers:
+
+```ts
+  observedAt: string | null              // ISO: when the station took its report
+  station: { id: string, name: string, miles: number } | null   // "KMDW", "Chicago, Chicago Midway Airport", 9.8
+```
+
+- **Measured where it can be.** When an official station (one with a four-character identifier,
+  such as an airport's) stands within 25 km of the place and within 150 m of its height, and its
+  latest report is at most 90 minutes old, `current` carries what the station measured:
+  temperature, dew point and the humidity that follows from those two, the wind as one set
+  (speed, direction, gusts), pressure and visibility. `feelsLike` is worked out from the measured
+  values. Anything the station left out stays the model's, kept in step with the rest: the dew
+  point is never above the temperature, and calm air has no direction. Otherwise `current` is
+  Open-Meteo's, as in Revision 7.
+- **The sky stays with the rain timing.** `condition`, `icon`, `isDay` and `uvIndex` are never
+  the station's. The words must agree with the 15-minute rain timing beside them, and that is
+  Open-Meteo's.
+- **Say where and when.** Where the detail window shows the current conditions it names the
+  station: "Measured 1:53 PM at Chicago, Chicago Midway Airport", the time first so that a long
+  name is cut short before the time is. Settings, under Data sources, says which station is in
+  use, or that none close by has a recent report. The widget, the strip and the tray stay as
+  they are.
+- **Time passing.** When `current` takes the forecast for the present hour after 90 minutes
+  without fresh data, `observedAt` and `station` become null with the readings.

@@ -378,6 +378,43 @@ jobs:
           path: ${{ steps.installer.outputs.file }}
           if-no-files-found: error
           retention-days: 30
+  # Every pull request's installer that passed the checks above becomes the one "test build",
+  # a pre-release the owner can download straight away. Installed copies never see it: they
+  # update only to the latest full release, which a pre-release never is. Like publish, this job
+  # builds nothing and runs none of the pull request's code.
+  test-build:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: WeathaDock-windows
+          path: installer
+      - name: Offer it as the test build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          file=$(ls installer/*-setup.exe | head -n 1)
+          name=$(basename "$file")
+          notes="Test build of pull request #$PR (commit ${SHA:0:7}), for trying before a release. Installed copies never update to it."
+          if gh release view test-build --repo "$REPO" >/dev/null 2>&1; then
+            for old in $(gh release view test-build --repo "$REPO" --json assets --jq '.assets[].name'); do
+              [ "$old" = "$name" ] || gh release delete-asset test-build "$old" --repo "$REPO" --yes
+            done
+            gh release upload test-build "$file" --clobber --repo "$REPO"
+            gh release edit test-build --repo "$REPO" --prerelease --latest=false --notes "$notes"
+          else
+            gh release create test-build "$file" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
+              --title "Test build" --notes "$notes"
+          fi
+          echo "Test build: https://github.com/$REPO/releases/download/test-build/$name"
   # Releases follow the version in src-tauri/tauri.conf.json: the first build on main with a
   # version that has no GitHub Release yet, and whose commit message contains [release],
   # publishes the installer there. Installed copies of the app look at the latest release for

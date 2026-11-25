@@ -1,4 +1,10 @@
-## WeathaDock 1.1.16
+## WeathaDock 1.1.17
+
+**The weather docked on the taskbar stays put.** In 1.1.16 it could come and go by itself, for example on a taskbar set to hide itself. It now keeps its place until the taskbar has really changed, and stays on screen while the taskbar is tucked away.
+
+**Its right-click menu opens above the taskbar.** Nothing covers the lower items any more, and the menu offers the same choices as the tray icon.
+
+### Also new since 1.1.15
 
 **Measured, not modeled.** Where an official weather station is close by (an airport's, as a rule), the temperature, humidity, wind, pressure and visibility are now the ones it measured, and the WeathaDock window says where and when. Everywhere else the app works as before.
 

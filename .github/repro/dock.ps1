@@ -4,7 +4,8 @@
 # window comes and goes, the taskbar hides itself and the screen gets larger. For every stretch
 # it counts how often the strip was where it belongs and drawn. The counts go into a short
 # summary file, so that one job can print the summaries of all runs together.
-param([string]$Version = '1.1.16')
+# -Installer: a setup file to install instead of the released one (the app built from a branch).
+param([string]$Version = '1.1.16', [string]$Installer = '')
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -24,6 +25,29 @@ public struct Rect { public int Left, Top, Right, Bottom; }
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from, uint to, bool attach);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+// The open menu: "left top right bottom", then what lies over it ("nothing", "the strip",
+// "the taskbar"), or "none".
+public static string Menu(uint app) {
+  IntPtr menu = IntPtr.Zero;
+  for (IntPtr h = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "#32768", null); h != IntPtr.Zero; h = FindWindowEx(IntPtr.Zero, h, "#32768", null))
+    if (IsWindowVisible(h)) { menu = h; break; }
+  if (menu == IntPtr.Zero) return "none";
+  Rect m; GetWindowRect(menu, out m);
+  IntPtr bar = FindWindow("Shell_TrayWnd", null);
+  string over = "nothing";
+  for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero && h != menu; h = GetWindow(h, 2)) {
+    if (!IsWindowVisible(h)) continue;
+    Rect r; GetWindowRect(h, out r);
+    if (r.Right <= m.Left || r.Left >= m.Right || r.Bottom <= m.Top || r.Top >= m.Bottom) continue;
+    if (h == bar) { over = "the taskbar"; break; }
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    var s = new System.Text.StringBuilder(80); GetWindowText(h, s, 80);
+    if (pid == app && s.ToString() == "WeathaDock taskbar") { over = "the strip"; break; }
+  }
+  return m.Left + " " + m.Top + " " + m.Right + " " + m.Bottom + " " + over;
+}
 [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SystemParametersInfo(uint action, uint param, string value, uint flags);
 [DllImport("user32.dll")] public static extern bool SetSysColors(int count, int[] elements, int[] colors);
@@ -139,11 +163,11 @@ function Get-Contrast([int]$left, [int]$top, [int]$wide, [int]$high) {
 }
 
 # The bottom of the screen, where the taskbar is, into the log.
-function Save-Bar($name) {
+function Save-Bar($name, [int]$high = 96) {
   try {
     $w = [Lab.W]::GetSystemMetrics(0); $h = [Lab.W]::GetSystemMetrics(1)
-    $shot = New-Object System.Drawing.Bitmap $w, 96
-    $g = [System.Drawing.Graphics]::FromImage($shot); $g.CopyFromScreen(0, $h - 96, 0, 0, $shot.Size); $g.Dispose()
+    $shot = New-Object System.Drawing.Bitmap $w, $high
+    $g = [System.Drawing.Graphics]::FromImage($shot); $g.CopyFromScreen(0, $h - $high, 0, 0, $shot.Size); $g.Dispose()
     $file = Join-Path $env:TEMP "$name.jpg"
     $shot.Save($file, $jpeg, $quality); $shot.Dispose()
     "$name-BEGIN"
@@ -153,8 +177,11 @@ function Save-Bar($name) {
 }
 
 function Install($ver) {
-  $setup = Join-Path $env:TEMP "WeathaDock_${ver}_x64-setup.exe"
-  Invoke-WebRequest "https://github.com/awpmap/weathadock/releases/download/v$ver/WeathaDock_${ver}_x64-setup.exe" -OutFile $setup -TimeoutSec 180
+  $setup = $Installer
+  if (-not $setup) {
+    $setup = Join-Path $env:TEMP "WeathaDock_${ver}_x64-setup.exe"
+    Invoke-WebRequest "https://github.com/awpmap/weathadock/releases/download/v$ver/WeathaDock_${ver}_x64-setup.exe" -OutFile $setup -TimeoutSec 180
+  }
   $p = Start-Process $setup -ArgumentList '/P' -PassThru
   if (-not $p.WaitForExit(180000)) { "LAB   the installer did not finish in three minutes"; Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 2
@@ -283,6 +310,25 @@ $busy | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyCont
 Stop-Process -Id $churn.Id -Force -ErrorAction SilentlyContinue
 Watch 'quiet again' 36 3
 
+"LAB ===== the strip's right-click menu"
+$p = [Lab.W]::Strip([uint32]$app.Id) -split ' '
+if ($p[0] -eq 'shown') {
+  [Lab.W]::SetCursorPos([int](([int]$p[1] + [int]$p[3]) / 2), [int](([int]$p[2] + [int]$p[4]) / 2)) | Out-Null
+  Start-Sleep -Milliseconds 500
+  [Lab.W]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero); [Lab.W]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Seconds 1
+  $first = [Lab.W]::Menu([uint32]$app.Id)
+  Start-Sleep -Seconds 3
+  $later = [Lab.W]::Menu([uint32]$app.Id)
+  Note ("menu right after the right-click: $first; three seconds later: $later; taskbar " + [Lab.W]::Bar())
+  Save-Bar 'MENU' 420
+  [Lab.W]::SetCursorPos([int]([Lab.W]::GetSystemMetrics(0) / 2), 150) | Out-Null
+  Start-Sleep -Milliseconds 300
+  [Lab.W]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero); [Lab.W]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Seconds 1
+  Note ("menu after a click elsewhere: " + [Lab.W]::Menu([uint32]$app.Id))
+} else { Note "no menu check: the strip is $($p -join ' ')" }
+
 "LAB ===== a window takes the whole screen for a quarter of a minute"
 $full = Start-Process pwsh -ArgumentList '-NoProfile', '-File', $fullScript -PassThru
 $h = [IntPtr]::Zero
@@ -301,6 +347,8 @@ $midX = [int]([Lab.W]::GetSystemMetrics(0) / 2); $bottom = [Lab.W]::GetSystemMet
 [Lab.W]::SetCursorPos($midX, 200) | Out-Null
 Watch 'taskbar hides itself' 42 3
 [Lab.W]::SetCursorPos($midX, $bottom) | Out-Null
+# A real movement onto the bottom edge, the way a mouse does it.
+[Lab.W]::mouse_event(0x8001, 32768, 65535, 0, [UIntPtr]::Zero)
 Watch 'taskbar called up' 12 3
 Save-Bar 'BAR4'
 [Lab.W]::SetCursorPos($midX, 200) | Out-Null
@@ -327,7 +375,7 @@ $geo = foreach ($line in $lines) {
 }
 $groups = @($geo | Group-Object | Sort-Object Count -Descending | ForEach-Object { "$($_.Count) x [$($_.Name)]" })
 Note ("the app measured the taskbar $(@($geo).Count) times: " + ($groups -join ', '))
-foreach ($what in 'out of room -> true', 'out of room -> false', 'tray icon -> temperature') { Note ("the app noted '$what' " + @($lines | Where-Object { $_ -like "*$what*" }).Count + ' times') }
+foreach ($what in 'out of room -> true', 'out of room -> false', 'tray icon -> temperature', 'still following') { Note ("the app noted '$what' " + @($lines | Where-Object { $_ -like "*$what*" }).Count + ' times') }
 if (Test-Path (Join-Path $cfg 'crash.log')) { Get-Content (Join-Path $cfg 'crash.log') | Select-Object -Last 5 | ForEach-Object { Note "CRASH: $_" } }
 if ($app.HasExited) { Note 'THE APP IS NO LONGER RUNNING' }
 if (-not $probe.WaitForExit(5000)) { Stop-Process -Id $probe.Id -Force -ErrorAction SilentlyContinue }

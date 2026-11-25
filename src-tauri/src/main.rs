@@ -21,6 +21,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt as _;
+#[cfg(windows)]
+use weathadock_core::dock::Answer;
 use weathadock_core::{settings, weather};
 
 use net::{chrono_now_ms as now_ms, Net};
@@ -85,6 +87,8 @@ struct Shared {
     /// Docked on a centered taskbar that has filled up: there is no room for the strip, so it
     /// steps aside and the tray icon carries the temperature until room returns.
     out_of_room: AtomicBool,
+    /// What the taskbar has said about its free stretch, and what the docked strip follows.
+    dock_memory: Mutex<weathadock_core::dock::Memory>,
     taskbar_watch: Mutex<TaskbarWatch>,
     backdrop: Mutex<Backdrop>,
     pending_section: Mutex<Option<String>>,
@@ -717,7 +721,7 @@ fn on_menu(app: &AppHandle, id: &str) {
                 d["pillPos"] = Value::Null;
             });
             rebuild_widget(app);
-            place_pill(app);
+            place_pill(app, false);
         }
         "update" => app.state::<Updater>().install(app),
         "quit" => quit(app),
@@ -998,9 +1002,16 @@ fn rebuild_widget(app: &AppHandle) {
 }
 
 /// Where the pill belongs: over the taskbar, just left of the tray icons (physical px).
-fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
+/// Docked, the taskbar is asked where its free stretch is only when `ask` is set (or nothing is
+/// known yet); otherwise the strip keeps what it follows.
+fn pill_geometry(app: &AppHandle, width: i32, ask: bool) -> (i32, i32, i32) {
     #[cfg(windows)]
-    if let Some((bar, tray)) = win32::taskbar_rects() {
+    if let Some((raw, tray)) = win32::taskbar_rects() {
+        // A taskbar that hides itself is placed by where it sits when shown, so the strip stays
+        // on the screen while the taskbar is tucked away.
+        let (bar, tucked) = win32::taskbar_home(raw);
+        let (dx, dy) = (bar.left - raw.left, bar.top - raw.top);
+        let tray = tray.map(|t| win32::Rect { left: t.left + dx, right: t.right + dx, top: t.top + dy, bottom: t.bottom + dy });
         let height = bar.bottom - bar.top;
         let horizontal = bar.right - bar.left > height * 3;
         if horizontal && height >= 30 {
@@ -1009,21 +1020,17 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
             let mut spot = None;
             let mut crowded = false;
             if docked(app) {
-                // Docked: the empty stretch left of the Start button on a centered taskbar.
-                let margin = (height as f64 * 0.25) as i32;
-                if let Some((left, right)) = win32::taskbar_free_left() {
-                    let room = ((right - left - 2 * margin) as f64 / scale) as i32;
-                    if room >= DOCK_MIN {
-                        dock.0 = room.min(900) as u32;
-                        spot = Some((left + margin, bar.top, height));
-                    } else {
-                        // A centered taskbar fills from the middle outwards: with no room left of
-                        // Start there is none by the tray either, only app buttons to cover.
-                        crowded = win32::taskbar_is_centered();
+                // A tucked-away taskbar has nothing to say about its buttons.
+                match dock_answer(app, bar, scale, ask && !tucked) {
+                    Some(Answer::Dock { x, room }) => {
+                        dock.0 = room;
+                        spot = Some((x, bar.top, height));
                     }
+                    Some(Answer::Crowded) => crowded = true,
+                    _ => {}
                 }
             }
-            trace(format!("pill_geometry docked={} dock={dock:?} spot={spot:?} crowded={crowded} scale={scale}", docked(app)));
+            trace(format!("pill_geometry docked={} dock={dock:?} spot={spot:?} crowded={crowded} tucked={tucked} scale={scale}", docked(app)));
             set_out_of_room(app, crowded);
             let changed = std::mem::replace(&mut *shared(app).dock.lock().unwrap(), dock) != dock;
             if changed {
@@ -1044,14 +1051,46 @@ fn pill_geometry(app: &AppHandle, width: i32) -> (i32, i32, i32) {
     (ax + aw - width - (16.0 * scale) as i32, ay + ah - height - (12.0 * scale) as i32, height)
 }
 
-fn place_pill(app: &AppHandle) {
+/// What the docked strip follows: the taskbar's answer about the stretch left of its Start
+/// button, taken in by `dock::Memory`, so that an answer that fails or makes no sense changes
+/// nothing and a different one has to be given twice in a row.
+#[cfg(windows)]
+fn dock_answer(app: &AppHandle, bar: win32::Rect, scale: f64, ask: bool) -> Option<Answer> {
+    let st = shared(app);
+    let known = st.dock_memory.lock().unwrap().current;
+    if !ask && known.is_some() {
+        return known;
+    }
+    // Asked without holding the lock: the taskbar can be slow to answer.
+    let reading = win32::taskbar_free_left().map(|(left, right)| {
+        let margin = ((bar.bottom - bar.top) as f64 * 0.25) as i32;
+        let room = ((right - left - 2 * margin) as f64 / scale) as i32;
+        if room >= DOCK_MIN {
+            Answer::Dock { x: left + margin, room: room.min(900) as u32 }
+        } else if win32::taskbar_is_centered() {
+            // A centered taskbar fills from the middle outwards: with no room left of Start
+            // there is none by the tray either, only app buttons to cover.
+            Answer::Crowded
+        } else {
+            Answer::Beside
+        }
+    });
+    let followed = st.dock_memory.lock().unwrap().follow(reading);
+    if reading != followed {
+        trace(format!("taskbar answer {reading:?}, still following {followed:?}"));
+    }
+    followed
+}
+
+/// Size and place the strip or pill. `ask`: see `pill_geometry`.
+fn place_pill(app: &AppHandle, ask: bool) {
     let Some(w) = window(app, "pill") else { return };
     let st = shared(app);
     let width = st.sizes.lock().unwrap().get("pill").map(|s| s.0 as i32).unwrap_or(180);
-    let (x, y, height) = pill_geometry(app, width);
+    let (x, y, height) = pill_geometry(app, width, ask);
     st.sizes.lock().unwrap().insert("pill".into(), (width as u32, height as u32));
     if out_of_room(app) {
-        // Nowhere to put it: it waits out of sight until `follow_taskbar` finds room again.
+        // Nowhere to put it: it waits out of sight until the taskbar has room again.
         hide_window(&w);
         return;
     }
@@ -1101,7 +1140,7 @@ fn sync_pill_now(app: &AppHandle) {
                 if let Some(h) = win32::handle_of(&_w) {
                     win32::make_widget_window(h);
                 }
-                place_pill(app);
+                place_pill(app, true);
             }
         }
         (false, Some(w)) => {
@@ -1117,7 +1156,7 @@ fn set_pill_visible(app: &AppHandle, visible: bool) {
         return;
     }
     if visible {
-        place_pill(app);
+        place_pill(app, true);
         if !out_of_room(app) {
             show_inactive(&w);
         }
@@ -1288,8 +1327,10 @@ fn tick(app: &AppHandle) {
     let wanted = covered && !win32::fullscreen_on(snap.fullscreen, pill);
     let show = wanted && !out_of_room(app);
     set_pill_visible(app, show);
-    if show {
-        win32::keep_on_top(pill); // the taskbar likes to climb back over it
+    // The taskbar likes to climb back over the strip, so it is put back on top, but never over
+    // an open menu (its own included), whose lower items it would cover.
+    if show && !win32::menu_open() {
+        win32::keep_on_top(pill);
     }
     if wanted {
         // Also while the strip waits for room, which is how it learns that room has returned.
@@ -1300,7 +1341,8 @@ fn tick(app: &AppHandle) {
 /// Keep the docked strip where the taskbar has room for it. Asking the taskbar where its
 /// buttons are is slow, so it is only asked when something suggests they moved: the taskbar
 /// itself changed (another resolution, scale or screen), an app window opened or closed (a
-/// centered taskbar then slides its Start button), or half a minute has passed.
+/// centered taskbar then slides its Start button), or half a minute has passed. What the strip
+/// does with the answers is up to `dock::Memory`: no single answer can move it or take it away.
 #[cfg(windows)]
 fn follow_taskbar(app: &AppHandle) {
     if !docked(app) {
@@ -1320,7 +1362,14 @@ fn follow_taskbar(app: &AppHandle) {
         }
         watch.due = None;
     }
-    place_pill(app);
+    place_pill(app, true);
+    // A different answer is asked about again a second later, to be confirmed or dropped, and a
+    // taskbar that has not given a usable answer yet is asked again soon.
+    let again = st.dock_memory.lock().unwrap().ask_again_in();
+    if let Some(n) = again {
+        let mut watch = st.taskbar_watch.lock().unwrap();
+        watch.due = Some(watch.ticks + n);
+    }
 }
 
 fn start_ticking(app: &AppHandle) {
@@ -1385,12 +1434,13 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
         if changed("placement") {
             // Whether there is room is measured afresh when the strip is placed.
             shared(app).out_of_room.store(false, Ordering::Relaxed);
+            *shared(app).dock_memory.lock().unwrap() = Default::default();
         }
         apply_tray_image(app);
         off_main(app, |app| {
             std::thread::sleep(Duration::from_millis(200));
             sync_pill_now(app);
-            place_pill(app);
+            place_pill(app, true);
         });
     }
     if changed("mouseBattery") {
@@ -1656,7 +1706,8 @@ fn set_content_size(app: AppHandle, window: WebviewWindow, width: f64, height: f
                 return;
             }
             st.sizes.lock().unwrap().insert("pill".into(), (width, previous.1));
-            place_pill(&app);
+            // A new width needs no new answer from the taskbar.
+            place_pill(&app, false);
         }
         _ => {}
     }
@@ -1683,9 +1734,16 @@ fn show_context_menu(app: AppHandle, window: WebviewWindow) {
     if window.label() != "widget" && window.label() != "pill" {
         return;
     }
-    if let Ok(menu) = build_menu(&app, true) {
-        let _ = window.popup_menu(&menu);
+    // The widget has its own menu. The strip and the pill carry what the tray icon would show
+    // (the widget's items, such as locking its position, mean nothing for them).
+    let Ok(menu) = build_menu(&app, window.label() == "widget") else { return };
+    // Opened from the taskbar, the menu opens above it, so that no item ends up under it.
+    #[cfg(windows)]
+    if let Some((x, y)) = win32::handle_of(&window).and_then(win32::menu_anchor) {
+        let _ = window.popup_menu_at(&menu, PhysicalPosition::new(x, y));
+        return;
     }
+    let _ = window.popup_menu(&menu);
 }
 
 /// The release build stops dead on an internal error, which would otherwise leave no trace.
@@ -1748,10 +1806,12 @@ fn get_backdrop(app: AppHandle) -> Value {
     backdrop_info(&app)
 }
 
-#[tauri::command]
+// Off the main thread: the taskbar can be slow to answer.
+#[tauri::command(async)]
 fn get_dock(app: AppHandle) -> Value {
-    // Measure now: the strip's page can ask before the window has been placed for the first time.
-    let _ = pill_geometry(&app, 0);
+    // Measure now if nothing is known yet: the strip's page can ask before the window has been
+    // placed for the first time.
+    let _ = pill_geometry(&app, 0, false);
     trace(format!("get_dock -> {}", dock_info(&app)));
     dock_info(&app)
 }
@@ -1816,6 +1876,7 @@ fn main() {
                 tray_number: Mutex::new(None),
                 dock: Mutex::new((0, false)),
                 out_of_room: AtomicBool::new(false),
+                dock_memory: Mutex::new(Default::default()),
                 taskbar_watch: Mutex::new(TaskbarWatch::default()),
                 backdrop: Mutex::new(Backdrop::default()),
                 battery: Mutex::new(None),

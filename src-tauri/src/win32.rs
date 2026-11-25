@@ -278,11 +278,84 @@ pub fn handle_of(window: &tauri::WebviewWindow) -> Option<Handle> {
     window.hwnd().ok().map(|h| h.0 as isize)
 }
 
+/// Where the primary taskbar sits when it is shown, and whether it is tucked away just now
+/// ("Automatically hide the taskbar" leaves only a sliver of it on the screen). The primary
+/// taskbar is always on the main screen.
+pub fn taskbar_home(bar: Rect) -> (Rect, bool) {
+    let Some(m) = main_screen() else { return (bar, false) };
+    let (high, wide) = (bar.bottom - bar.top, bar.right - bar.left);
+    let home = if bar.bottom > m.bottom {
+        Rect { top: m.bottom - high, bottom: m.bottom, ..bar }
+    } else if bar.top < m.top {
+        Rect { top: m.top, bottom: m.top + high, ..bar }
+    } else if bar.right > m.right {
+        Rect { left: m.right - wide, right: m.right, ..bar }
+    } else if bar.left < m.left {
+        Rect { left: m.left, right: m.left + wide, ..bar }
+    } else {
+        bar
+    };
+    (home, home != bar)
+}
+
+/// The whole of the main screen (physical px).
+fn main_screen() -> Option<RECT> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+    let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+    unsafe { GetMonitorInfoW(MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY), &mut info) }.as_bool().then_some(info.rcMonitor)
+}
+
+/// Whether a menu of any program is open on the screen. Windows that keep themselves above
+/// others must not climb over it, or its lower items end up under them.
+pub fn menu_open() -> bool {
+    unsafe {
+        let mut after: Option<HWND> = None;
+        for _ in 0..32 {
+            let Ok(h) = FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) else { return false };
+            if h.0.is_null() {
+                return false;
+            }
+            if IsWindowVisible(h).as_bool() {
+                return true;
+            }
+            after = Some(h);
+        }
+    }
+    false
+}
+
+/// Where a menu opened from a window on the taskbar should start, in that window's own
+/// coordinates: under the pointer, on the taskbar's edge, so that Windows opens it over the
+/// desktop and none of its items are under the taskbar. `None` when the pointer is not on the
+/// taskbar.
+pub fn menu_anchor(h: Handle) -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ScreenToClient;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let (bar, _) = taskbar_rects()?;
+    let (home, _) = taskbar_home(bar);
+    if home.right - home.left <= (home.bottom - home.top) * 3 {
+        return None; // a taskbar down the side of the screen
+    }
+    let mut p = POINT::default();
+    unsafe { GetCursorPos(&mut p).ok()? };
+    if p.x < home.left || p.x >= home.right || p.y < home.top || p.y >= home.bottom {
+        return None;
+    }
+    // A menu that does not fit below its starting point opens upwards from it. A taskbar at the
+    // top of the screen (some tools put it there) has the desktop below it instead.
+    let at_top = main_screen().is_some_and(|m| home.top <= m.top && home.bottom < m.bottom);
+    p.y = if at_top { home.bottom } else { home.top };
+    unsafe { ScreenToClient(hwnd(h), &mut p).as_bool().then_some((p.x, p.y)) }
+}
+
 /// The empty stretch of the primary taskbar to the left of the Start button, as physical
 /// `(left, right)` x coordinates. With centered taskbar icons this is the wide free area a
 /// docked weather strip can use; with left-aligned icons it is empty or a few pixels.
 /// Windows 11 draws the taskbar without child windows, so the buttons are located through
-/// UI Automation. Called only when the strip is placed, never on a timer.
+/// UI Automation. `None` when the taskbar gives no sound answer: no Start button, or one
+/// without a size or outside the taskbar, as it can report while it is busy or hidden.
 pub fn taskbar_free_left() -> Option<(i32, i32)> {
     use windows::core::BSTR;
     use windows::Win32::System::Variant::VARIANT;
@@ -298,9 +371,10 @@ pub fn taskbar_free_left() -> Option<(i32, i32)> {
             let condition = uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &VARIANT::from(BSTR::from(id))).ok()?;
             root.FindFirst(TreeScope_Descendants, &condition).ok()?.CurrentBoundingRectangle().ok()
         };
-        let start = find("StartButton")?;
+        let on_bar = |r: &RECT| r.right > r.left && r.bottom > r.top && r.left >= bar_rect.left && r.right <= bar_rect.right && r.bottom > bar_rect.top && r.top < bar_rect.bottom;
+        let start = find("StartButton").filter(on_bar)?;
         // The Windows Widgets button, when switched on, takes the far left of a centered taskbar.
-        let left = find("WidgetsButton").filter(|w| w.right > w.left && w.left < start.left).map_or(bar_rect.left, |w| w.right);
+        let left = find("WidgetsButton").filter(|w| on_bar(w) && w.right <= start.left).map_or(bar_rect.left, |w| w.right);
         Some((left, start.left))
     }
 }

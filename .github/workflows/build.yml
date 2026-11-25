@@ -14,7 +14,58 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # A release whose code already passed this workflow on its pull request needs no second
+  # build: the files are identical, so the installer tested there is the one to publish. The
+  # code is matched by its git tree, which covers every file, and only runs from branches of
+  # this repository count (never a fork's). When nothing matches, as when main moved on after
+  # the pull request was tested, the build job below builds and tests as usual.
+  reuse:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      found: ${{ steps.find.outputs.found }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Find the installer this code was tested with
+        id: find
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          found=false
+          runs=$(gh api "repos/$REPO/actions/artifacts?name=tested-$tree&per_page=20" \
+            --jq '.artifacts[] | select(.expired | not) | .workflow_run.id' || true)
+          for run in $runs; do
+            ok=$(gh api "repos/$REPO/actions/runs/$run" --jq \
+              "(.event == \"pull_request\") and (.path == \".github/workflows/build.yml\") and (.conclusion == \"success\") and (.head_repository.full_name == \"$REPO\")" || echo false)
+            [ "$ok" = "true" ] || continue
+            rm -rf installer
+            gh run download "$run" --repo "$REPO" --name "tested-$tree" --dir installer || continue
+            if ls installer/*_"$version"_*-setup.exe >/dev/null 2>&1; then
+              echo "Reusing the installer tested in run $run (tree $tree)."
+              found=true
+              break
+            fi
+          done
+          [ "$found" = true ] || echo "No tested installer for tree $tree: building it here."
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - if: steps.find.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeathaDock-windows
+          path: installer/*-setup.exe
+          if-no-files-found: error
   build:
+    needs: reuse
+    if: ${{ !cancelled() && needs.reuse.outputs.found != 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -482,14 +533,28 @@ jobs:
         with:
           name: smoke
           path: smoke/
+      # Reached only when every check above passed: lets the release reuse this installer.
+      - name: Name the tested installer after the code
+        if: github.event_name == 'pull_request'
+        id: tree
+        shell: bash
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-${{ steps.tree.outputs.tree }}
+          path: ${{ steps.installer.outputs.file }}
+          if-no-files-found: error
+          retention-days: 30
   # Releases follow the version in src-tauri/tauri.conf.json: the first build on main with a
   # version that has no GitHub Release yet, and whose commit message contains [release],
   # publishes the installer there. Installed copies of the app look at the latest release for
-  # updates. This job builds nothing: it publishes the very installer the build job made and
-  # tested, and it is the only place a token that can write to the repository exists.
+  # updates. This job builds nothing: it publishes the very installer that was tested, by the
+  # build job or on the pull request, and it is the only place a token that can write to the
+  # repository exists.
   publish:
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]')
+    needs: [reuse, build]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release]') && (needs.reuse.outputs.found == 'true' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,19 +1,32 @@
 //! Network access: zip lookup, National Weather Service and Open-Meteo. The merging of the
-//! responses lives in `weathadock_core::weather`.
+//! responses, and the rules for which station may speak for a place, live in
+//! `weathadock_core::weather`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use weathadock_core::weather::{self, NwsData};
+use weathadock_core::weather::{self, NwsData, Reading, Station};
 
 const GEO: &str = "application/geo+json";
 
+/// What the Weather Service's grid lookup says about a place.
+#[derive(Clone)]
+struct Point {
+    forecast: String,
+    hourly: String,
+    time_zone: Option<String>,
+    /// Where the list of the observing stations around the place is found.
+    stations: Option<String>,
+}
+
 pub struct Net {
     client: reqwest::Client,
-    /// zip -> (forecast url, hourly url, time zone); the NWS grid for a place never changes.
-    points: Mutex<HashMap<String, (String, String, Option<String>)>>,
+    /// zip -> the grid lookup; the NWS grid for a place never changes.
+    points: Mutex<HashMap<String, Point>>,
+    /// zip -> the official stations within reach of the place, nearest first. Asked for once.
+    stations: Mutex<HashMap<String, Vec<Station>>>,
 }
 
 pub enum Failure {
@@ -29,7 +42,7 @@ impl Net {
             .timeout(Duration::from_secs(12))
             .build()
             .unwrap_or_default();
-        Net { client, points: Mutex::new(HashMap::new()) }
+        Net { client, points: Mutex::new(HashMap::new()), stations: Mutex::new(HashMap::new()) }
     }
 
     pub fn client(&self) -> &reqwest::Client {
@@ -69,37 +82,86 @@ impl Net {
         self.get_json(&url, GEO, 1).await.ok()?["features"].as_array().cloned()
     }
 
-    /// The Weather Service's time zone and its daily and hourly forecasts for a place, found
-    /// through the grid lookup (remembered per place).
-    async fn fetch_forecasts(&self, loc: &Value) -> Option<(Option<String>, Vec<Value>, Vec<Value>)> {
+    /// The Weather Service's daily and hourly forecasts for a place, with its time zone and how
+    /// high its grid square lies, found through the grid lookup (remembered per place).
+    async fn fetch_forecasts(&self, loc: &Value) -> Option<NwsData> {
         let zip = loc["zip"].as_str()?.to_string();
         let cached = self.points.lock().ok()?.get(&zip).cloned();
-        let (forecast, hourly, time_zone) = match cached {
+        let point = match cached {
             Some(p) => p,
             None => {
                 let key = format!("{},{}", loc["lat"].as_f64()?, loc["lon"].as_f64()?);
                 let j = self.get_json(&format!("https://api.weather.gov/points/{key}"), GEO, 1).await.ok()?;
                 let p = &j["properties"];
-                let point = (p["forecast"].as_str()?.to_string(), p["forecastHourly"].as_str()?.to_string(), p["timeZone"].as_str().map(String::from));
+                let point = Point {
+                    forecast: p["forecast"].as_str()?.to_string(),
+                    hourly: p["forecastHourly"].as_str()?.to_string(),
+                    time_zone: p["timeZone"].as_str().map(String::from),
+                    stations: p["observationStations"].as_str().map(String::from),
+                };
                 self.points.lock().ok()?.insert(zip.clone(), point.clone());
                 point
             }
         };
-        let (daily, hours) = tokio::join!(self.get_json(&forecast, GEO, 1), self.get_json(&hourly, GEO, 1));
+        let (daily, hours) = tokio::join!(self.get_json(&point.forecast, GEO, 1), self.get_json(&point.hourly, GEO, 1));
         // The service moves a place to another grid now and then: look it up afresh next time.
         if matches!(daily, Err(Failure::NotFound)) || matches!(hours, Err(Failure::NotFound)) {
             self.points.lock().ok()?.remove(&zip);
         }
+        let elevation = [&daily, &hours].into_iter().find_map(|r| r.as_ref().ok()?["properties"]["elevation"]["value"].as_f64());
         let periods = |r: Result<Value, Failure>| r.ok().and_then(|v| v["properties"]["periods"].as_array().cloned()).unwrap_or_default();
-        Some((time_zone, periods(daily), periods(hours)))
+        Some(NwsData { time_zone: point.time_zone, daily: periods(daily), hourly: periods(hours), alerts: None, elevation })
     }
 
-    /// Everything the Weather Service has for a place. The alerts are asked for on their own,
-    /// so they arrive even when the grid lookup or the forecasts fail.
+    /// Everything the Weather Service forecasts for a place. The alerts are asked for on their
+    /// own, so they arrive even when the grid lookup or the forecasts fail.
     async fn fetch_nws(&self, loc: &Value) -> Option<NwsData> {
         let (forecasts, alerts) = tokio::join!(self.fetch_forecasts(loc), self.fetch_alerts(loc));
-        let (time_zone, daily, hourly) = forecasts.unwrap_or_default();
-        (alerts.is_some() || !daily.is_empty() || !hourly.is_empty()).then_some(NwsData { time_zone, daily, hourly, alerts })
+        let nws = NwsData { alerts, ..forecasts.unwrap_or_default() };
+        (nws.alerts.is_some() || !nws.daily.is_empty() || !nws.hourly.is_empty()).then_some(nws)
+    }
+
+    /// The latest report of an official station that can speak for a place: the nearest one
+    /// that stands about as high as the place (`ground`, in metres) and has reported lately.
+    /// `None` when there is no such station; the modelled conditions are shown then.
+    async fn fetch_reading(&self, loc: &Value, ground: Option<f64>) -> Option<Reading> {
+        let zip = loc["zip"].as_str()?;
+        let known = self.stations.lock().ok()?.get(zip).cloned();
+        let stations = match known {
+            Some(list) => list,
+            None => {
+                let url = self.points.lock().ok()?.get(zip)?.stations.clone()?;
+                let list = self.get_json(&url, GEO, 0).await.ok()?;
+                let near = weather::nearby_stations(&list, loc["lat"].as_f64()?, loc["lon"].as_f64()?);
+                let names: Vec<String> = near.iter().map(|s| format!("{} {:.0} km", s.id, s.km)).collect();
+                crate::trace(format!("stations in reach: {}", if names.is_empty() { "none".into() } else { names.join(", ") }));
+                self.stations.lock().ok()?.insert(zip.to_string(), near.clone());
+                near
+            }
+        };
+        // The nearest first; a neighbour only while the nearer ones have nothing fresh to say.
+        for station in stations.iter().filter(|s| s.level_with(ground)).take(3) {
+            let url = format!("https://api.weather.gov/stations/{}/observations/latest", station.id);
+            let why = match self.get_json(&url, GEO, 0).await {
+                Ok(report) => match weather::read_station(&report, station, chrono_now_ms()) {
+                    Ok(reading) => {
+                        crate::trace(format!("now: measured at {} ({}), {}", station.id, station.name, describe(&reading)));
+                        return Some(reading);
+                    }
+                    Err(why) => why,
+                },
+                Err(Failure::NotFound) => {
+                    // The service lists stations that have stopped reporting for good.
+                    if let Some(list) = self.stations.lock().ok()?.get_mut(zip) {
+                        list.retain(|s| s.id != station.id);
+                    }
+                    "it has no reports".into()
+                }
+                Err(Failure::Other(why)) => format!("it did not answer ({why})"),
+            };
+            crate::trace(format!("now: not from {}, {why}", station.id));
+        }
+        None
     }
 
     /// Fetch everything for a place. `Err` only when neither forecast source answered.
@@ -109,8 +171,16 @@ impl Net {
         let om_url = weather::open_meteo_url(lat, lon);
         let (nws, om) = tokio::join!(self.fetch_nws(loc), self.get_json(&om_url, "application/json", 1));
         let om = om.ok();
+        // The station is asked last: which one may speak for the place depends on how high the
+        // place lies, and the forecasts say that. It is one small request, and it gets a few
+        // seconds at most, so a silent station never holds the forecast back.
+        let mut reading = None;
+        if nws.is_some() || om.is_some() {
+            let ground = weather::ground_elevation(nws.as_ref(), om.as_ref());
+            reading = tokio::time::timeout(Duration::from_secs(8), self.fetch_reading(loc, ground)).await.ok().flatten();
+        }
         let now = chrono_now_ms();
-        weather::build_state(loc, nws.as_ref(), om.as_ref(), now, previous)
+        weather::build_state(loc, nws.as_ref(), om.as_ref(), reading.as_ref(), now, previous)
             .ok_or_else(|| "Could not reach the National Weather Service or Open-Meteo. Check your internet connection.".to_string())
     }
 
@@ -155,6 +225,26 @@ impl Net {
             json!({ "ok": false, "error": format!("No US location found for {zip}.") })
         }
     }
+}
+
+/// "16 km away, taken 14 min ago: 39.0°F, dew point 34.0°F, wind 10.3 mph from 250°, 30.02 inHg, 10.00 mi"
+fn describe(r: &Reading) -> String {
+    let mut parts = vec![format!("{:.1}°F", r.temp)];
+    if let Some(dew) = r.dew {
+        parts.push(format!("dew point {dew:.1}°F"));
+    }
+    if let Some(w) = &r.wind {
+        let from = w.from.map_or(String::new(), |d| format!(" from {d:.0}°"));
+        let gust = w.gust.map_or(String::new(), |g| format!(", gusts {g:.1}"));
+        parts.push(format!("wind {:.1} mph{from}{gust}", w.speed));
+    }
+    if let Some(p) = r.pressure {
+        parts.push(format!("{p:.2} inHg"));
+    }
+    if let Some(v) = r.visibility {
+        parts.push(format!("{v:.2} mi"));
+    }
+    format!("{:.0} km away, taken {} min ago: {}", r.station.km, (chrono_now_ms() - r.at) / 60_000, parts.join(", "))
 }
 
 pub fn chrono_now_ms() -> i64 {

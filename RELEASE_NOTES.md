@@ -1,3 +1,11 @@
+## WeathaDock 1.1.22
+
+More fixes from 1.1.16 come back, for the weather on the desktop. The weather docked on the taskbar works exactly as before.
+
+**A widget kept above other windows stays put.** It no longer disappears after a full-screen game or video, and a maximized window on a screen without a taskbar no longer counts as full screen.
+
+**Never steals focus.** Clicking the desktop widget no longer takes the keyboard away from the app you were typing in.
+
 ## WeathaDock 1.1.21
 
 The look of the weather on the taskbar from 1.1.16 comes back. Where the weather sits on the taskbar still works exactly as in 1.1.15.

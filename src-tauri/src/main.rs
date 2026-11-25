@@ -803,6 +803,7 @@ fn create_widget_now(app: &AppHandle) {
         .skip_taskbar(true)
         .shadow(false)
         .focused(false)
+        .focusable(false)
         .visible(false)
         .always_on_top(flag(app, "widgetOnTop"))
         .initialization_script(BRIDGE)
@@ -831,14 +832,19 @@ fn create_widget_now(app: &AppHandle) {
 fn show_widget(app: &AppHandle) {
     let Some(w) = window(app, "widget") else { return };
     let on_top = flag(app, "widgetOnTop");
-    let _ = w.set_always_on_top(on_top);
     show_inactive(&w);
+    // Above or below other windows is set with Win32 directly, never through the window
+    // library: it believes this window is hidden (it is shown with Win32 too) and would hide
+    // it again, and rewrite its styles, whenever the setting changed.
     #[cfg(windows)]
-    if !on_top {
-        if let Some(h) = win32::handle_of(&w) {
+    if let Some(h) = win32::handle_of(&w) {
+        win32::set_topmost(h, on_top);
+        if !on_top {
             win32::send_to_bottom(h);
         }
     }
+    #[cfg(not(windows))]
+    let _ = w.set_always_on_top(on_top);
 }
 
 fn rebuild_widget(app: &AppHandle) {
@@ -1102,7 +1108,8 @@ fn tick(app: &AppHandle) {
         c.fullscreen = widget_fullscreen;
         trace(format!("fullscreen on the widget's monitor -> {widget_fullscreen}"));
         if widget_on && on_top {
-            let _ = widget.set_always_on_top(!widget_fullscreen);
+            // With Win32 directly, for the reason given in `show_widget`.
+            win32::set_topmost(handle, !widget_fullscreen);
             if widget_fullscreen {
                 win32::send_to_bottom(handle);
             }
@@ -1164,12 +1171,9 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
             let _ = pill.destroy();
         }
     }
-    if changed("widgetOnTop") && !changed("glass") {
-        if widget_enabled(app) {
-            show_widget(app);
-        } else if let Some(w) = window(app, "widget") {
-            let _ = w.set_always_on_top(flag(app, "widgetOnTop"));
-        }
+    // A hidden widget picks the setting up when it is shown again.
+    if changed("widgetOnTop") && !changed("glass") && widget_enabled(app) {
+        show_widget(app);
     }
     if changed("showWidget") || changed("placement") {
         if widget_enabled(app) {

@@ -268,13 +268,10 @@
     }
 
     var day0 = isDayAt(now);
-    /* a station's report is behind "now" unless the preview asks for the modelled conditions */
-    var measured = params.get('station') !== '0';
-    var STATION = { id: 'KSPI', name: params.get('long') === '1' ? 'Springfield, Abraham Lincoln Capital Airport and Air National Guard Base, Sangamon County' : 'Springfield, Abraham Lincoln Capital Airport', miles: 3.6 };
     return {
-      status: 'ok', error: null, stale: false, updatedAt: iso(now - 2 * MIN), sources: { nws: true, openMeteo: true, alerts: true },
+      status: 'ok', error: null, stale: false, updatedAt: iso(now - 2 * MIN), sources: { nws: true, openMeteo: true },
       location: LOC,
-      current: Object.assign({ condition: label(sc.cur.icon, day0), isDay: day0, observedAt: measured ? iso(now - 11 * MIN) : null, station: measured ? STATION : null }, sc.cur),
+      current: Object.assign({ condition: label(sc.cur.icon, day0), isDay: day0 }, sc.cur),
       today: { high: sc.highs[0], low: sc.lows[0], sunrise: daily[0].sunrise, sunset: daily[0].sunset, summary: sc.summary },
       nextPrecip: {
         kind: sc.precip.kind, isNow: sc.precip.isNow,
@@ -304,9 +301,7 @@
       st.stale = true;
       st.error = 'Couldn\u2019t reach the weather service. Showing the last forecast we have.';
       st.updatedAt = iso(new Date(st.updatedAt).getTime() - 47 * MIN);
-      if (st.current && st.current.observedAt) st.current.observedAt = iso(new Date(st.updatedAt).getTime() - 9 * MIN);
-      st.sources = { nws: false, openMeteo: false, alerts: false };
-      st.alertsAt = st.updatedAt;
+      st.sources = { nws: false, openMeteo: false };
     }
     return st;
   }
@@ -469,8 +464,6 @@
     onBattery: function () {},
     getDock: function () { return Promise.resolve({ room: Number(params.get('room') || 0), light: params.get('bar') === 'light' }); },
     onDock: function () {},
-    getBackdrop: function () { return Promise.resolve({ dark: params.get('backdrop') === 'bright' }); },
-    onBackdrop: function () {},
     showContextMenu: function () { window.__contextMenus = (window.__contextMenus || 0) + 1; log('showContextMenu'); },
     setContentSize: function (w, h) { window.__contentSize = { width: w, height: h }; log('setContentSize', w, h); },
     setTrayIcon: function (dataUrl) { window.__trayIcon = dataUrl; },

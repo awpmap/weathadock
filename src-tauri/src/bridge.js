@@ -40,8 +40,6 @@
     showContextMenu: function () { call('show_context_menu'); },
     getDock: function () { return invoke('get_dock'); },
     onDock: on('sky:dock'),
-    getBackdrop: function () { return invoke('get_backdrop'); },
-    onBackdrop: on('sky:backdrop'),
     getBattery: function () { return invoke('get_battery'); },
     getBatteryLog: function () { return invoke('get_battery_log'); },
     onBattery: on('sky:battery'),

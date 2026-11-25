@@ -19,7 +19,7 @@
     return s;
   }
   function cfg(orientation, size, align, hours, days, on) {
-    return { orientation: orientation, size: size, align: align, ink: 'auto', hours: hours, days: days, show: show(on) };
+    return { orientation: orientation, size: size, align: align, ink: 'light', hours: hours, days: days, show: show(on) };
   }
 
   var NOW = ['icon', 'temp', 'condition', 'highLow', 'feelsLike'];

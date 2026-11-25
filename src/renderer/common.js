@@ -4,19 +4,10 @@
 
   var params = new URLSearchParams(location.search);
 
-  /* Resolves once window.sky exists. Inside the app the bridge defines it before any page script
-     runs. The sample weather in mock.js is for design previews in a plain browser only, so the
-     app itself can never show it. */
+  /* Resolves once window.sky exists. Loads mock.js when the preload API is absent. */
   function ready() {
     return new Promise(function (resolve) {
       if (window.sky) return resolve(window.sky);
-      if (window.__TAURI_INTERNALS__ || /^tauri/i.test(location.hostname) || /^tauri/i.test(location.protocol)) {
-        var tries = 0, wait = setInterval(function () {
-          if (window.sky) { clearInterval(wait); resolve(window.sky); }
-          else if (++tries > 200) clearInterval(wait);
-        }, 50);
-        return;
-      }
       var s = document.createElement('script');
       s.src = 'mock.js';
       s.onload = function () { resolve(window.sky); };
@@ -62,11 +53,7 @@
     return (same ? '' : weekday(iso, tz) + ' ') + time(iso, tz);
   }
 
-  /* whole degrees with a true minus sign (U+2212), which sits level with the digits */
-  function whole(v) { return String(Math.round(v)).replace('-', '\u2212'); }
-  function deg(v) { return v == null || isNaN(v) ? '–' : whole(v) + '°'; }
-  /* the present moment; design previews pin it just after the sample data's own timestamp */
-  function now(s) { return window.sky && window.sky.__mock && s && s.updatedAt ? new Date(s.updatedAt).getTime() + 120000 : Date.now(); }
+  function deg(v) { return v == null || isNaN(v) ? '–' : Math.round(v) + '°'; }
   function num(v, suffix) { return v == null || isNaN(v) ? '–' : v + (suffix || ''); }
 
   /* temperature -> color (cool blue .. teal .. gold .. orange .. red) for range bars */
@@ -97,8 +84,6 @@
     if (!np || !np.kind) return '';
     var w = kindWord(np.kind);
     if (np.isNow) return np.endsAt ? w + ' until ' + hour(np.endsAt, tz) : w + ' now';
-    /* from the hourly chance, not from minute-by-minute timing: no minute counts */
-    if (np.chance != null) return np.startsAt && np.minutesUntil > 0 ? w + ' around ' + hour(np.startsAt, tz) : w + ' likely';
     if (np.minutesUntil != null && np.minutesUntil <= 90) return w + ' in ' + Math.max(1, Math.round(np.minutesUntil)) + ' min';
     if (np.startsAt) return w + ' at ' + hour(np.startsAt, tz);
     return w + ' soon';
@@ -170,65 +155,6 @@
     root.addEventListener('dragstart', function (e) { e.preventDefault(); });
   }
 
-  /* 64x64 tray icon: temperature on a sky-blue tile, alert dot. The widget keeps it current; docked
-     on the taskbar there is no widget, so the strip does, for when the taskbar has no room for it. */
-  var lastTray = '';
-  function tray(s) {
-    var temp = s.current && s.current.temp != null ? String(Math.round(s.current.temp)) : null;
-    var a = s.alerts && s.alerts[0];
-    var sig = temp + '|' + (a ? sev(a) : '');
-    if (sig === lastTray) return;
-    lastTray = sig;
-    var c = document.createElement('canvas');
-    c.width = c.height = 64;
-    var g = c.getContext('2d');
-    g.lineJoin = 'round'; g.lineCap = 'round';
-    if (temp != null) {
-      /* A sky-blue tile in the app icon's colors, so the number reads as weather and is not
-         mistaken for the bare CPU or GPU temperatures that hardware monitors put in the tray. */
-      var sky = g.createLinearGradient(8, 0, 56, 64);
-      sky.addColorStop(0, '#4FB0FF'); sky.addColorStop(0.55, '#2A7FEF'); sky.addColorStop(1, '#1A52D2');
-      g.beginPath(); g.roundRect(1, 1, 62, 62, 15);
-      g.fillStyle = sky; g.fill();
-      var text = temp, F = '"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif';
-      /* a degree mark when there is room for it (one or two digits, no alert dot) */
-      var deg = text.length <= 2 && !a;
-      var room = deg ? 44 : 54;
-      g.font = '700 60px ' + F;
-      var size = Math.min(56, Math.floor(60 * room / g.measureText(text).width));
-      g.font = '700 ' + size + 'px ' + F;
-      g.textAlign = 'center'; g.textBaseline = 'alphabetic';
-      var m = g.measureText(text);
-      var asc = m.actualBoundingBoxAscent, desc = m.actualBoundingBoxDescent;
-      /* stretch vertically (max 1.3x) so the number fills the tile */
-      var sy = Math.max(1, Math.min(1.3, 44 / (asc + desc)));
-      var half = m.width / 2, cx = deg ? 28 : 32;
-      g.save();
-      g.translate(cx, 33); g.scale(1, sy);
-      g.fillStyle = '#fff'; g.fillText(text, 0, (asc - desc) / 2);
-      g.restore();
-      if (deg) {
-        g.beginPath(); g.arc(Math.min(55, cx + half + 6), 17, 4.5, 0, Math.PI * 2);
-        g.strokeStyle = '#fff'; g.lineWidth = 3.5; g.stroke();
-      }
-    } else {
-      g.beginPath();
-      g.moveTo(18, 48); g.lineTo(44, 48);
-      g.arc(44, 37, 11, Math.PI / 2, -Math.PI / 2.6, true);
-      g.arc(31, 28, 14, -0.25, Math.PI * 1.05, true);
-      g.arc(18, 38, 10, -Math.PI / 2, Math.PI / 2, true);
-      g.closePath();
-      g.strokeStyle = 'rgba(0,0,0,0.55)'; g.lineWidth = 6; g.stroke();
-      g.fillStyle = '#fff'; g.fill();
-    }
-    if (a) {
-      g.beginPath(); g.arc(54, 10, 9, 0, Math.PI * 2);
-      g.fillStyle = sevColor(sev(a)); g.fill();
-      g.strokeStyle = 'rgba(0,0,0,0.65)'; g.lineWidth = 3; g.stroke();
-    }
-    try { window.sky.setTrayIcon(c.toDataURL('image/png')); } catch (e) {}
-  }
-
   function watchVisibility() {
     var f = function () { document.documentElement.classList.toggle('is-hidden', document.visibilityState === 'hidden'); };
     document.addEventListener('visibilitychange', f); f();
@@ -238,8 +164,8 @@
     params: params, ready: ready, esc: esc,
     time: time, hour: hour, hourNum: hourNum, weekday: weekday, weekdayLong: weekdayLong, monthDay: monthDay, dayKey: dayKey,
     dateLabel: dateLabel, dateWeekdayLong: dateWeekdayLong, when: when,
-    deg: deg, whole: whole, now: now, num: num, tempColor: tempColor, sev: sev, sevColor: sevColor,
+    deg: deg, num: num, tempColor: tempColor, sev: sev, sevColor: sevColor,
     kindGlyph: kindGlyph, kindWord: kindWord, shortHint: shortHint, precipTimeline: precipTimeline,
-    dragOrClick: dragOrClick, watchVisibility: watchVisibility, tray: tray
+    dragOrClick: dragOrClick, watchVisibility: watchVisibility
   };
 })();

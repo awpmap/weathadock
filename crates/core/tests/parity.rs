@@ -1,10 +1,7 @@
-//! Three recorded sets of service responses and the state the merge builds from each
-//! (tests/fixtures/cases.json). Any change to what the app would show appears as a diff here.
-//! After an intended change, run with WEATHADOCK_BLESS=1 to rewrite the file, and read the diff.
-use serde_json::{json, Value};
+//! Checks the Rust weather merge against states produced by the original JavaScript
+//! implementation for the same inputs (tests/fixtures/cases.json).
+use serde_json::Value;
 use weathadock_core::weather::{build_state, NwsData};
-
-const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/cases.json");
 
 fn diff(path: &str, a: &Value, b: &Value, out: &mut Vec<String>) {
     match (a, b) {
@@ -35,31 +32,21 @@ fn diff(path: &str, a: &Value, b: &Value, out: &mut Vec<String>) {
 }
 
 #[test]
-fn builds_the_recorded_states() {
-    let mut cases: Value = serde_json::from_str(&std::fs::read_to_string(FIXTURES).unwrap()).unwrap();
-    let bless = std::env::var_os("WEATHADOCK_BLESS").is_some();
-    for case in cases.as_array_mut().unwrap() {
+fn matches_the_javascript_implementation() {
+    let cases: Value = serde_json::from_str(include_str!("fixtures/cases.json")).unwrap();
+    for case in cases.as_array().unwrap() {
         let nws = case["nws"].as_object().map(|n| NwsData {
             time_zone: n["timeZone"].as_str().map(String::from),
             daily: n["daily"].as_array().unwrap().clone(),
             hourly: n["hourly"].as_array().unwrap().clone(),
             alerts: Some(n["alerts"].as_array().unwrap().clone()),
-            elevation: None,
         });
         let om = (!case["om"].is_null()).then(|| &case["om"]);
-        let previous = json!({ "alerts": case["previousAlerts"] });
-        let got = build_state(&case["loc"], nws.as_ref(), om, None, case["now"].as_i64().unwrap(), &previous).unwrap();
-        if bless {
-            case["expected"] = got;
-            continue;
-        }
+        let got = build_state(&case["loc"], nws.as_ref(), om, case["now"].as_i64().unwrap(), &case["previousAlerts"]).unwrap();
         let mut out = Vec::new();
         diff("state", &got, &case["expected"], &mut out);
         out.sort();
         out.dedup();
         assert!(out.is_empty(), "case {}:\n{}", case["name"], out.join("\n"));
-    }
-    if bless {
-        std::fs::write(FIXTURES, serde_json::to_string(&cases).unwrap() + "\n").unwrap();
     }
 }

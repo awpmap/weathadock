@@ -1,5 +1,6 @@
-# Temporary: finds out why the widget of a released build disappears on some desktops.
 name: Desktop lab
+# Temporary: runs released builds on test desktops to find out why the weather disappears after
+# the update to 1.1.16. Removed again before anything is merged.
 on:
   pull_request:
     paths:
@@ -13,16 +14,20 @@ concurrency:
   cancel-in-progress: true
 jobs:
   lab:
-    name: ${{ matrix.version }} on ${{ matrix.os }}
+    name: ${{ matrix.version }} ${{ matrix.part }} on ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-2025]
+        os: [windows-2025, windows-2022]
         version: ['1.1.16', '1.1.15']
+        part: [desktops, update, update-docked, update-pill, places]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Run the app on differently set up desktops
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the app on a test desktop
         shell: pwsh
-        run: ./.github/repro/desktop.ps1 -Version '${{ matrix.version }}'
+        run: ./.github/repro/desktop.ps1 -Version '${{ matrix.version }}' -Part '${{ matrix.part }}'

@@ -16,8 +16,8 @@
     var html, cls = dock ? 'pill is-dock' : 'pill';
     if (!s.current) {
       html = s.status === 'error'
-        ? '<span class="p-muted">' + I.gl('offline') + 'Weather unavailable</span>'
-        : '<span class="p-muted">' + I.gl('refresh', 'spin') + 'Loading…</span>';
+        ? '<span class="p-muted">' + I.gl('offline') + '<span>Weather unavailable</span></span>'
+        : '<span class="p-muted">' + I.gl('refresh', 'spin') + '<span>Loading…</span></span>';
     } else {
       var c = s.current, t = s.today || {}, tz = s.location && s.location.timeZone;
       html = I.wx(c.icon, c.isDay) + '<span class="p-temp">' + U.deg(c.temp) + '</span>';
@@ -54,9 +54,16 @@
 
   /* Docked: drop the least important parts until the strip fits the free taskbar space. */
   function fit() {
-    root.removeAttribute('data-fit');
+    root.removeAttribute('data-fit'); root.style.maxWidth = '';
     if (!dock) return;
-    for (var level = 1; level <= 5 && root.scrollWidth > room; level++) root.setAttribute('data-fit', level);
+    for (var level = 1; level <= 6 && root.scrollWidth > room; level++) root.setAttribute('data-fit', level);
+    if (root.scrollWidth <= room) return;
+    /* What is still too wide is a long alert name (or the note that the weather is
+       unavailable). It is cut short, and when too little of an alert's name would be left to
+       read, its badge alone stays. */
+    root.style.maxWidth = room + 'px';
+    var name = root.querySelector('.p-alert span');
+    if (name && name.offsetWidth < 56) root.setAttribute('data-fit', 7);
   }
 
   function reportSize() {

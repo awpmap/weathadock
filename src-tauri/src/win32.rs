@@ -306,17 +306,22 @@ fn main_screen() -> Option<RECT> {
     unsafe { GetMonitorInfoW(MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY), &mut info) }.as_bool().then_some(info.rcMonitor)
 }
 
-/// Whether a menu of any program is open on the screen. Windows that keep themselves above
-/// others must not climb over it, or its lower items end up under them.
+/// Whether one of this app's own menus is open. The strip, which keeps itself above other
+/// windows, must not climb over it, or the menu's lower items end up under it. Other programs'
+/// menus do not count: a program can leave a menu window shown for good, and the strip would
+/// then stay behind the taskbar.
 pub fn menu_open() -> bool {
+    let me = std::process::id();
     unsafe {
         let mut after: Option<HWND> = None;
-        for _ in 0..32 {
+        for _ in 0..64 {
             let Ok(h) = FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) else { return false };
             if h.0.is_null() {
                 return false;
             }
-            if IsWindowVisible(h).as_bool() {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, Some(&mut pid));
+            if pid == me && IsWindowVisible(h).as_bool() {
                 return true;
             }
             after = Some(h);

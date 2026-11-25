@@ -763,12 +763,21 @@ pub fn nearby_stations(list: &Value, lat: f64, lon: f64) -> Vec<Station> {
         if km.is_nan() || km > STATION_KM || out.iter().any(|s| s.id == id) {
             continue;
         }
-        let name = p["name"].as_str().map(|n| n.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|n| !n.is_empty());
+        let name = p["name"].as_str().map(|n| station_name(&n.split_whitespace().collect::<Vec<_>>().join(" "))).filter(|n| !n.is_empty());
         let elevation = num(&p["elevation"]["value"]).filter(|_| unit_of(&p["elevation"]) == Some("m"));
         out.push(Station { id: id.to_string(), name: name.unwrap_or_else(|| id.to_string()), km, elevation });
     }
     out.sort_by(|a, b| a.km.total_cmp(&b.km));
     out
+}
+
+/// The Weather Service names many stations "City, City Something Airport": the city once is
+/// enough ("Chicago Midway Airport").
+fn station_name(name: &str) -> String {
+    match name.split_once(", ") {
+        Some((city, rest)) if !city.is_empty() && rest.len() > city.len() && rest.to_lowercase().starts_with(&city.to_lowercase()) => rest.to_string(),
+        _ => name.to_string(),
+    }
 }
 
 /// "wmoUnit:degC" -> "degC"

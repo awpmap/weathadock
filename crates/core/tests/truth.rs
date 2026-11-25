@@ -491,7 +491,16 @@ fn now_is_measured_where_an_official_station_is_near() {
         "properties": { "stationIdentifier": "E1234", "name": "EW1234 Chicago", "elevation": { "unitCode": "wmoUnit:m", "value": 182 } } }));
     let near = nearby_stations(&list, 41.8858, -87.6181);
     assert_eq!(near.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["KMDW"]);
-    assert_eq!((near[0].name.as_str(), near[0].km.round(), near[0].elevation), ("Chicago, Chicago Midway Airport", 16.0, Some(188.0616)));
+    assert_eq!((near[0].name.as_str(), near[0].km.round(), near[0].elevation), ("Chicago Midway Airport", 16.0, Some(188.0616)));
+    // The city is said once ("Chicago, Chicago Midway Airport" in the list); a name that is
+    // not that pattern stays whole.
+    let named = |name: &str| {
+        let one = json!({ "features": [{ "geometry": { "coordinates": [-87.62, 41.89] }, "properties": { "stationIdentifier": "KXYZ", "name": name } }] });
+        nearby_stations(&one, 41.8858, -87.6181)[0].name.clone()
+    };
+    assert_eq!(named("Denver, Centennial Airport"), "Denver, Centennial Airport");
+    assert_eq!(named("Chicago, Chicago-O'Hare International Airport"), "Chicago-O'Hare International Airport");
+    assert_eq!(named("Chicago, Chicago"), "Chicago, Chicago");
 
     // The report, read twenty minutes after it was taken as on that run, whose own trace said:
     // "35.6°F, dew point 24.8°F, wind 8.1 mph from 350°, 30.58 inHg, 10.00 mi".
@@ -515,7 +524,7 @@ fn now_is_measured_where_an_official_station_is_near() {
     let theirs = |key: &str| captured()["properties"][key]["value"].as_f64().unwrap();
     assert_eq!(c["humidity"], theirs("relativeHumidity").round() as i64);
     assert_eq!(c["feelsLike"], (theirs("windChill") * 1.8 + 32.0).round() as i64);
-    assert_eq!((c["observedAt"].as_str(), c["station"]["id"].as_str(), c["station"]["name"].as_str()), (Some("2026-11-18T19:53:00.000Z"), Some("KMDW"), Some("Chicago, Chicago Midway Airport")));
+    assert_eq!((c["observedAt"].as_str(), c["station"]["id"].as_str(), c["station"]["name"].as_str()), (Some("2026-11-18T19:53:00.000Z"), Some("KMDW"), Some("Chicago Midway Airport")));
     assert_eq!(c["station"]["miles"], 10.0);
 
     // Everything else on screen follows the measured temperature.

@@ -380,7 +380,7 @@ What main guarantees, and what the pages must keep to:
 
 ```ts
   observedAt: string | null              // ISO: when the station took its report
-  station: { id: string, name: string, miles: number } | null   // "KMDW", "Chicago, Chicago Midway Airport", 9.8
+  station: { id: string, name: string, miles: number } | null   // "KMDW", "Chicago Midway Airport", 9.8
 ```
 
 - **Measured where it can be.** When an official station (one with a four-character identifier,
@@ -395,7 +395,7 @@ What main guarantees, and what the pages must keep to:
   the station's. The words must agree with the 15-minute rain timing beside them, and that is
   Open-Meteo's.
 - **Say where and when.** Where the detail window shows the current conditions it names the
-  station: "Measured 1:53 PM at Chicago, Chicago Midway Airport", the time first so that a long
+  station: "Measured 1:53 PM at Chicago Midway Airport", the time first so that a long
   name is cut short before the time is. Settings, under Data sources, says which station is in
   use, or that none close by has a recent report. The widget, the strip and the tray stay as
   they are.

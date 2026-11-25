@@ -35,7 +35,9 @@ const BRIDGE: &str = include_str!("bridge.js");
 const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,msEdgeTranslate,OptimizationHints,Translate,MediaRouter \
 --in-process-gpu --disable-extensions --disable-component-update --disable-background-networking --no-pings --disable-sync --disable-breakpad";
 const TRAY_PLAIN: &[u8] = include_bytes!("../../build/tray.png");
-const SECTIONS: [&str; 5] = ["overview", "hourly", "daily", "alerts", "settings"];
+const SECTIONS: [&str; 6] = ["overview", "hourly", "daily", "alerts", "widget", "settings"];
+/// Between forecast refreshes the alerts alone are asked for this often.
+const ALERTS_EVERY_MS: i64 = 2 * 60_000;
 
 struct Shared {
     dir: PathBuf,
@@ -44,8 +46,16 @@ struct Shared {
     /// zip -> last good state, for instant location switching and instant startup.
     cache: Mutex<HashMap<String, Value>>,
     refresh_lock: tokio::sync::Mutex<()>,
+    /// One writer at a time for settings.json.
+    settings_file: Mutex<()>,
+    /// When the forecast and the alerts were last asked for.
     last_attempt: Mutex<i64>,
-    last_failed: AtomicBool,
+    last_alert_check: Mutex<i64>,
+    /// Why the last forecast refresh failed, and whether the person had asked for that refresh
+    /// (then it is reported at once). `None` after a refresh that worked.
+    failure: Mutex<Option<(String, bool)>>,
+    /// The last refresh brought only one of the two services, so the next one comes sooner.
+    partial: AtomicBool,
     /// window label -> accumulated drag position (physical px)
     drags: Mutex<HashMap<String, (f64, f64)>>,
     /// window label -> intended size (physical px)
@@ -110,26 +120,65 @@ fn active_zip(app: &AppHandle) -> Option<String> {
     settings::active_zip(&shared(app).settings.lock().unwrap())
 }
 
-/// Apply changes to the stored settings and write them to disk.
+/// Apply changes to the stored settings and write them to disk. One writer at a time, and the
+/// file is only ever replaced by a complete copy that has reached the disk, so neither two
+/// changes at once nor a crash or power cut can leave half a file behind.
 fn store(app: &AppHandle, change: impl FnOnce(&mut Value)) {
     let st = shared(app);
+    let _writer = st.settings_file.lock().unwrap();
     let text = {
         let mut data = st.settings.lock().unwrap();
         change(&mut data);
         serde_json::to_string_pretty(&*data).unwrap_or_default()
     };
-    let _ = std::fs::create_dir_all(&st.dir);
-    let tmp = st.dir.join("settings.json.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, st.dir.join("settings.json"));
+    if text.is_empty() {
+        return;
     }
+    let _ = std::fs::create_dir_all(&st.dir);
+    let _ = write_whole(&st.dir.join("settings.json"), &text);
 }
 
+/// Write `text` beside `path`, make sure it is on the disk, then swap it into place.
+fn write_whole(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+}
+
+/// Read the settings without ever losing them: a file that is busy is tried again, and a
+/// damaged one is set aside (never overwritten with defaults) while the copy kept from the last
+/// good start takes its place.
 fn load_settings(dir: &PathBuf, roaming: Option<PathBuf>) -> Value {
-    let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
-    let stored = read(dir.join("settings.json"))
-        // Versions 1.0.x (built on Electron) kept their settings in %APPDATA%\WeathaDock.
-        .or_else(|| roaming.and_then(|r| read(r.join("WeathaDock").join("settings.json"))));
+    use std::io::ErrorKind::NotFound;
+    let (path, backup) = (dir.join("settings.json"), dir.join("settings.backup.json"));
+    let parse = |text: String| serde_json::from_str::<Value>(&text).ok().filter(Value::is_object);
+    let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(parse);
+    let mut text = std::fs::read_to_string(&path).map_err(|e| e.kind());
+    for _ in 0..4 {
+        if !matches!(text, Err(kind) if kind != NotFound) {
+            break;
+        }
+        // Another program (a backup, a sync tool, a virus scanner) has it open: wait a moment.
+        std::thread::sleep(Duration::from_millis(150));
+        text = std::fs::read_to_string(&path).map_err(|e| e.kind());
+    }
+    let stored = match text.map(parse) {
+        Ok(Some(good)) => {
+            let _ = std::fs::copy(&path, &backup);
+            Some(good)
+        }
+        Ok(None) => {
+            let _ = std::fs::rename(&path, dir.join("settings.damaged.json"));
+            read(backup)
+        }
+        // First start here. Versions 1.0.x (built on Electron) kept their settings in %APPDATA%\WeathaDock.
+        Err(NotFound) => roaming.and_then(|r| read(r.join("WeathaDock").join("settings.json"))),
+        Err(_) => read(backup),
+    };
     settings::load(stored)
 }
 
@@ -147,9 +196,19 @@ fn glass(app: &AppHandle) -> String {
 fn save_cache(app: &AppHandle) {
     let st = shared(app);
     let text = serde_json::to_string(&*st.cache.lock().unwrap()).unwrap_or_default();
-    let _ = std::fs::write(st.dir.join("forecast-cache.json"), text);
+    let _ = write_whole(&st.dir.join("forecast-cache.json"), &text);
 }
 
+fn updated_ms(state: &Value) -> Option<i64> {
+    state["updatedAt"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| d.timestamp_millis())
+}
+
+fn refresh_ms(app: &AppHandle) -> i64 {
+    setting(app, "refreshMinutes").as_i64().unwrap_or(10) * 60_000
+}
+
+/// Forecasts from the last run, so the app has something to show the moment it starts. A day
+/// old at most: what is shown is brought up to the present before it reaches a window.
 fn load_cache(dir: &PathBuf, data: &Value) -> HashMap<String, Value> {
     let mut out = HashMap::new();
     let Some(Value::Object(map)) = std::fs::read_to_string(dir.join("forecast-cache.json")).ok().and_then(|t| serde_json::from_str(&t).ok()) else {
@@ -157,12 +216,54 @@ fn load_cache(dir: &PathBuf, data: &Value) -> HashMap<String, Value> {
     };
     let known: Vec<&str> = data["locations"].as_array().into_iter().flatten().filter_map(|l| l["zip"].as_str()).collect();
     for (zip, state) in map {
-        let age = state["updatedAt"].as_str().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| now_ms() - d.timestamp_millis());
-        if known.contains(&zip.as_str()) && state["status"] == "ok" && age.map_or(false, |a| (0..6 * 3_600_000).contains(&a)) {
+        let age = updated_ms(&state).map(|at| now_ms() - at);
+        // Only states this version can bring up to the present are kept for longer than an hour.
+        let limit = if state["utcOffset"].is_number() { 24 } else { 1 } * 3_600_000;
+        if known.contains(&zip.as_str()) && state["status"] == "ok" && age.is_some_and(|a| (0..limit).contains(&a)) {
             out.insert(zip, state);
         }
     }
     out
+}
+
+/// What the windows should show right now: the forecast last fetched for the selected place,
+/// brought up to the present, with a note once a failed refresh starts to matter.
+fn compose(app: &AppHandle) -> Value {
+    let st = shared(app);
+    let Some(loc) = active_location(app) else { return weather::empty_state("loading", None, None) };
+    let failure = st.failure.lock().unwrap().clone();
+    let base = st.cache.lock().unwrap().get(loc["zip"].as_str().unwrap_or("")).cloned();
+    let Some(base) = base else {
+        return weather::empty_state(if failure.is_some() { "error" } else { "loading" }, failure.as_ref().map(|f| f.0.as_str()), Some(&loc));
+    };
+    let now = now_ms();
+    let mut shown = weather::advance(&base, now).unwrap_or(base);
+    if let Some((message, asked)) = failure {
+        // A refresh the person asked for reports its failure at once. Automatic ones stay quiet
+        // while the forecast on screen is still recent: a short outage is nobody's concern.
+        if asked || now - updated_ms(&shown).unwrap_or(0) >= 2 * refresh_ms(app) {
+            shown["stale"] = json!(true);
+            shown["error"] = json!(message);
+        }
+    }
+    shown
+}
+
+/// Work out what to show and tell the windows when it differs from what they have.
+fn present(app: &AppHandle) {
+    let next = compose(app);
+    let st = shared(app);
+    let changed = {
+        let mut shown = st.weather.lock().unwrap();
+        let changed = *shown != next;
+        if changed {
+            *shown = next;
+        }
+        changed
+    };
+    if changed {
+        publish(app);
+    }
 }
 
 fn publish(app: &AppHandle) {
@@ -178,17 +279,19 @@ fn publish_settings(app: &AppHandle) {
     update_tray(app);
 }
 
-async fn refresh(app: &AppHandle) {
+/// Fetch the forecast for the selected place. `asked` says the person asked for it: a failure
+/// is then reported at once. Automatic refreshes first try again quietly, because right after
+/// sleep or sign-in the network is often a few seconds behind.
+async fn refresh(app: &AppHandle, asked: bool) {
     let st = shared(app);
     let _guard = match st.refresh_lock.try_lock() {
         Ok(g) => g,
         Err(_) => {
-            // Another refresh is running. Wait for it, and only fetch again if it was for a
-            // different place than the one now selected.
+            // Another refresh is running. Wait for it, and fetch again unless it has just
+            // brought the forecast for the place that is selected now.
             let g = st.refresh_lock.lock().await;
-            let shown = st.weather.lock().unwrap()["location"]["zip"].as_str().map(String::from);
-            let fresh = st.weather.lock().unwrap()["updatedAt"].is_string() && !st.last_failed.load(Ordering::Relaxed);
-            if shown == active_zip(app) && fresh {
+            let fetched = active_zip(app).and_then(|zip| st.cache.lock().unwrap().get(&zip).and_then(updated_ms));
+            if fetched.is_some_and(|at| (0..30_000).contains(&(now_ms() - at))) {
                 return;
             }
             g
@@ -196,59 +299,106 @@ async fn refresh(app: &AppHandle) {
     };
     let Some(loc) = active_location(app) else { return };
     let zip = loc["zip"].as_str().unwrap_or("").to_string();
-    *st.last_attempt.lock().unwrap() = now_ms();
-    let previous_alerts = st.weather.lock().unwrap()["alerts"].clone();
-    let result = app.state::<Net>().fetch_weather(&loc, &previous_alerts).await;
-    let still_active = active_zip(app).as_deref() == Some(zip.as_str());
-    match result {
-        Ok(next) => {
-            st.cache.lock().unwrap().insert(zip, next.clone());
-            save_cache(app);
-            if !still_active {
-                return; // the person switched places while this was loading
+    let selected = || active_zip(app).as_deref() == Some(zip.as_str());
+    let started = std::time::Instant::now();
+    let mut result = Err(String::new());
+    for pause in [0, 5, 15] {
+        if pause > 0 {
+            if asked || !selected() || started.elapsed() > Duration::from_secs(30) {
+                break;
             }
-            st.last_failed.store(false, Ordering::Relaxed);
-            notify_alerts(app, &next["alerts"]);
-            *st.weather.lock().unwrap() = next;
+            tokio::time::sleep(Duration::from_secs(pause)).await;
         }
-        Err(message) => {
-            if !still_active {
-                return;
-            }
-            st.last_failed.store(true, Ordering::Relaxed);
-            let mut current = st.weather.lock().unwrap();
-            if current["current"].is_object() {
-                current["stale"] = json!(true);
-                current["error"] = json!(message);
-            } else {
-                *current = weather::empty_state("error", Some(&message), Some(&loc));
-            }
+        *st.last_attempt.lock().unwrap() = now_ms();
+        let previous = st.cache.lock().unwrap().get(&zip).cloned().unwrap_or(Value::Null);
+        result = app.state::<Net>().fetch_weather(&loc, &previous).await;
+        if result.is_ok() {
+            break;
         }
     }
-    publish(app);
+    match result {
+        Ok(next) => {
+            st.cache.lock().unwrap().insert(zip.clone(), next.clone());
+            save_cache(app);
+            if !selected() {
+                return; // the person switched places while this was loading
+            }
+            st.partial.store(next["sources"]["nws"] != true || next["sources"]["openMeteo"] != true, Ordering::Relaxed);
+            if next["alertsAt"] == next["updatedAt"] {
+                *st.last_alert_check.lock().unwrap() = now_ms();
+            }
+            *st.failure.lock().unwrap() = None;
+            notify_alerts(app, &next);
+        }
+        Err(message) => {
+            if !selected() {
+                return;
+            }
+            let mut failure = st.failure.lock().unwrap();
+            let asked = asked || failure.as_ref().is_some_and(|f| f.1);
+            *failure = Some((message, asked));
+        }
+    }
+    present(app);
 }
 
-fn spawn_refresh(app: &AppHandle) {
+fn spawn_refresh(app: &AppHandle, asked: bool) {
     let app = app.clone();
-    tauri::async_runtime::spawn(async move { refresh(&app).await });
+    tauri::async_runtime::spawn(async move { refresh(&app, asked).await });
 }
 
-/// Refreshes on the chosen interval, a minute after a failure, and promptly after sleep.
+/// Between forecast refreshes, ask for the alerts alone: a warning should not have to wait
+/// for the next refresh, which can be half an hour away.
+async fn check_alerts(app: &AppHandle, loc: &Value) {
+    let st = shared(app);
+    // A refresh asks for the alerts too, and must not be overtaken by this smaller answer.
+    let Ok(_guard) = st.refresh_lock.try_lock() else { return };
+    *st.last_alert_check.lock().unwrap() = now_ms();
+    let Some(features) = app.state::<Net>().fetch_alerts(loc).await else { return };
+    let Some(zip) = loc["zip"].as_str().filter(|zip| active_zip(app).as_deref() == Some(*zip)) else { return };
+    let (next, news) = {
+        let mut cache = st.cache.lock().unwrap();
+        let Some(base) = cache.get(zip) else { return };
+        let next = weather::with_alerts(base, &features, now_ms());
+        let news = next["alerts"] != base["alerts"];
+        cache.insert(zip.to_string(), next.clone());
+        (next, news)
+    };
+    if news {
+        save_cache(app);
+        notify_alerts(app, &next);
+    }
+    present(app);
+}
+
+/// Every 20 seconds: keep what is shown in step with the clock, refresh the forecast on the
+/// chosen interval (sooner after a failure or a partial answer, and promptly after sleep), and
+/// ask for the alerts in between.
 fn start_scheduler(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(20)).await;
             check_battery(&app, false);
-            if active_location(&app).is_none() {
-                continue;
-            }
+            let Some(loc) = active_location(&app) else { continue };
+            present(&app);
             let st = shared(&app);
-            let minutes = setting(&app, "refreshMinutes").as_i64().unwrap_or(10);
-            let wait = if st.last_failed.load(Ordering::Relaxed) { 60_000 } else { minutes * 60_000 };
-            let due = now_ms() - *st.last_attempt.lock().unwrap() >= wait;
-            if due {
-                refresh(&app).await;
+            let failed = st.failure.lock().unwrap().is_some();
+            let wait = if failed {
+                60_000
+            } else if st.partial.load(Ordering::Relaxed) {
+                120_000
+            } else {
+                refresh_ms(&app)
+            };
+            let now = now_ms();
+            let since_refresh = now - *st.last_attempt.lock().unwrap();
+            let since_alerts = now - *st.last_alert_check.lock().unwrap();
+            // A negative wait means the PC clock was set back: that must not stop the refreshes.
+            if !(0..wait).contains(&since_refresh) {
+                refresh(&app, false).await;
+            } else if !(0..ALERTS_EVERY_MS).contains(&since_alerts) {
+                check_alerts(&app, &loc).await;
             }
         }
     });
@@ -374,22 +524,22 @@ fn check_battery(app: &AppHandle, now: bool) {
     });
 }
 
-fn notify_alerts(app: &AppHandle, alerts: &Value) {
+/// Announce the alerts in `state` that are news, once each (see `weather::alerts_to_announce`).
+fn notify_alerts(app: &AppHandle, state: &Value) {
+    let alerts = state["alerts"].as_array().cloned().unwrap_or_default();
     let seen: Vec<Value> = setting(app, "notifiedAlerts").as_array().cloned().unwrap_or_default();
-    let fresh: Vec<&Value> = alerts.as_array().into_iter().flatten().filter(|a| !seen.contains(&a["id"])).collect();
-    if fresh.is_empty() {
-        return;
+    let (news, record) = weather::alerts_to_announce(&alerts, &seen);
+    if record != seen {
+        store(app, |d| d["notifiedAlerts"] = json!(record));
     }
-    let mut ids: Vec<Value> = fresh.iter().map(|a| a["id"].clone()).collect();
-    ids.extend(seen);
-    ids.truncate(80);
-    store(app, |d| d["notifiedAlerts"] = json!(ids));
     if !flag(app, "alertNotifications") {
         return;
     }
-    for a in fresh.iter().take(3) {
-        let body = a["headline"].as_str().filter(|s| !s.is_empty()).or(a["areaDesc"].as_str()).unwrap_or("");
-        let _ = app.notification().builder().title(a["event"].as_str().unwrap_or("Weather alert")).body(body).show();
+    let place = active_location(app).map(|l| place_label(&l)).unwrap_or_default();
+    let offset = state["utcOffset"].as_i64().unwrap_or(0) as i32;
+    for alert in news.iter().take(3) {
+        let (title, body) = weather::alert_notice(alert, &place, now_ms(), offset);
+        let _ = app.notification().builder().title(title).body(body).show();
     }
 }
 
@@ -405,20 +555,22 @@ fn tray_tooltip(app: &AppHandle) -> String {
     };
     let deg = |v: &Value| v.as_i64().map(|n| n.to_string()).unwrap_or_else(|| "--".into());
     // Lead with what this is, so the number is never taken for a hardware temperature.
-    let place = active_location(app).map(|l| place_label(&l));
+    let place = active_location(app).map(|l| place_label(&l)).filter(|p| !p.is_empty());
+    let offline = if s["stale"] == true { " (offline)" } else { "" };
+    // Most important first: Windows shows 127 characters.
     let mut parts = vec![
         place.map_or_else(|| "Weather".to_string(), |p| format!("Weather in {p}")),
-        format!("{temp}°F {}", s["current"]["condition"].as_str().unwrap_or("")),
+        format!("{temp}°F {}", s["current"]["condition"].as_str().unwrap_or("")).trim_end().to_string() + offline,
     ];
+    if let Some(alerts) = s["alerts"].as_array().filter(|a| !a.is_empty()) {
+        let more = if alerts.len() > 1 { format!(" +{}", alerts.len() - 1) } else { String::new() };
+        parts.push(format!("⚠ {}{more}", alerts[0]["event"].as_str().unwrap_or("Alert")));
+    }
     if s["today"].is_object() {
         parts.push(format!("H {}°  L {}°", deg(&s["today"]["high"]), deg(&s["today"]["low"])));
     }
     if let Some(h) = s["nextPrecip"]["headline"].as_str().filter(|h| !h.is_empty()) {
         parts.push(h.to_string());
-    }
-    if let Some(alerts) = s["alerts"].as_array().filter(|a| !a.is_empty()) {
-        let more = if alerts.len() > 1 { format!(" +{}", alerts.len() - 1) } else { String::new() };
-        parts.push(format!("⚠ {}{more}", alerts[0]["event"].as_str().unwrap_or("Alert")));
     }
     let battery = battery_info(app);
     if let Some(tier) = battery["tier"].as_str() {
@@ -436,12 +588,23 @@ fn tray_tooltip(app: &AppHandle) -> String {
         };
         parts.push(format!("Mouse battery {level}{note}"));
     }
-    // Windows limits tray tooltips to 127 characters.
-    parts.join("\n").chars().take(127).collect()
+    // A line that does not fit is left out whole instead of being cut in the middle.
+    let mut text = String::new();
+    for part in parts {
+        if text.encode_utf16().count() + part.encode_utf16().count() < 127 {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&part);
+        }
+    }
+    text
 }
 
+/// "Springfield, IL", or whichever of the two parts is known.
 fn place_label(l: &Value) -> String {
-    format!("{}, {}", l["city"].as_str().unwrap_or(""), l["state"].as_str().unwrap_or(""))
+    let part = |key: &str| l[key].as_str().map(str::trim).filter(|s| !s.is_empty());
+    [part("city"), part("state")].into_iter().flatten().collect::<Vec<_>>().join(", ")
 }
 
 fn build_menu(app: &AppHandle, for_widget: bool) -> tauri::Result<Menu<Wry>> {
@@ -450,7 +613,7 @@ fn build_menu(app: &AppHandle, for_widget: bool) -> tauri::Result<Menu<Wry>> {
     let active = settings::active_zip(&data);
     let mut menu = MenuBuilder::new(app);
     if !for_widget {
-        let title = settings::active_location(&data).map(|l| place_label(&l)).unwrap_or_else(|| APP_NAME.into());
+        let title = settings::active_location(&data).map(|l| place_label(&l)).filter(|t| !t.is_empty()).unwrap_or_else(|| APP_NAME.into());
         menu = menu.item(&MenuItemBuilder::with_id("title", title).enabled(false).build(app)?).separator();
     }
     menu = menu
@@ -475,7 +638,7 @@ fn build_menu(app: &AppHandle, for_widget: bool) -> tauri::Result<Menu<Wry>> {
     menu = menu.separator();
     if for_widget {
         menu = menu
-            .item(&MenuItemBuilder::with_id("settings", "Customize widget…").build(app)?)
+            .item(&MenuItemBuilder::with_id("customize", "Customize widget…").build(app)?)
             .item(&check("lock", "Lock position", "lockPosition")?)
             .item(&check("ontop", "Keep above other windows", "widgetOnTop")?)
             .item(&MenuItemBuilder::with_id("hide", "Hide widget").build(app)?);
@@ -500,7 +663,8 @@ fn on_menu(app: &AppHandle, id: &str) {
         "open" => open_detail(app, "overview"),
         "alerts" => open_detail(app, "alerts"),
         "settings" => open_detail(app, "settings"),
-        "refresh" => spawn_refresh(app),
+        "customize" => open_detail(app, "widget"),
+        "refresh" => spawn_refresh(app, true),
         "show" => apply_settings(app, &json!({ "showWidget": !flag(app, "showWidget") })),
         "hide" => apply_settings(app, &json!({ "showWidget": false })),
         "undock" => apply_settings(app, &json!({ "placement": "desktop", "showWidget": true })),
@@ -804,12 +968,9 @@ fn open_detail_now(app: &AppHandle, section: &str) {
     }
     let section = if SECTIONS.contains(&section) { section } else { "overview" };
     // Opening the app is a good moment to make sure the numbers are current.
-    let stale = shared(app).weather.lock().unwrap()["updatedAt"]
-        .as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map_or(true, |d| now_ms() - d.timestamp_millis() > 60_000);
+    let stale = updated_ms(&shared(app).weather.lock().unwrap()).map_or(true, |at| now_ms() - at > 60_000);
     if stale {
-        spawn_refresh(app);
+        spawn_refresh(app, false);
     }
     if let Some(w) = window(app, "detail") {
         let _ = w.unminimize();
@@ -819,10 +980,14 @@ fn open_detail_now(app: &AppHandle, section: &str) {
         return;
     }
     *shared(app).pending_section.lock().unwrap() = Some(section.to_string());
+    // Never larger than the screen it opens on (small or heavily scaled displays).
+    let (_, _, area_w, area_h, scale) = work_area(app, None);
+    let fit = |want: f64, have: i32| want.min(have as f64 / scale - 32.0).max(420.0);
+    let (width, height) = (fit(1000.0, area_w), fit(700.0, area_h));
     let mut builder = WebviewWindowBuilder::new(app, "detail", page(app, "detail.html"))
         .title(APP_NAME)
-        .inner_size(1000.0, 700.0)
-        .min_inner_size(780.0, 560.0)
+        .inner_size(width, height)
+        .min_inner_size(width.min(780.0), height.min(560.0))
         .decorations(false)
         .background_color(tauri::window::Color(18, 23, 34, 255))
         .initialization_script(BRIDGE)
@@ -834,7 +999,8 @@ fn open_detail_now(app: &AppHandle, section: &str) {
     }
     let Ok(w) = builder.build() else { return };
     if let Some((width, height)) = size {
-        let _ = w.set_size(PhysicalSize::new(width as u32, height as u32));
+        let (_, _, area_w, area_h, _) = work_area(app, saved_point(&saved));
+        let _ = w.set_size(PhysicalSize::new((width as u32).min(area_w as u32), (height as u32).min(area_h as u32)));
         match saved_point(&saved).filter(|&(x, y)| {
             let (ax, ay, aw, ah, _) = work_area(app, Some((x, y)));
             x + 200 > ax && x < ax + aw - 100 && y >= ay - 10 && y < ay + ah - 100
@@ -887,7 +1053,7 @@ fn open_setup_now(app: &AppHandle) {
 fn start_app(app: &AppHandle) {
     create_widget(app);
     sync_pill(app);
-    spawn_refresh(app);
+    spawn_refresh(app, false);
 }
 
 fn quit(app: &AppHandle) {
@@ -1028,17 +1194,17 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
 }
 
 fn set_active(app: &AppHandle, zip: &str) {
-    let Some(loc) = settings_snapshot(app)["locations"].as_array().into_iter().flatten().find(|l| l["zip"] == zip).cloned() else {
+    if !settings_snapshot(app)["locations"].as_array().into_iter().flatten().any(|l| l["zip"] == zip) {
         return;
-    };
+    }
     store(app, |d| d["activeZip"] = json!(zip));
     // Show what is already known for this place straight away, then fetch fresh data.
     let st = shared(app);
-    let cached = st.cache.lock().unwrap().get(zip).cloned();
-    *st.weather.lock().unwrap() = cached.unwrap_or_else(|| weather::empty_state("loading", None, Some(&loc)));
-    publish(app);
+    *st.failure.lock().unwrap() = None;
+    st.partial.store(false, Ordering::Relaxed);
+    present(app);
     publish_settings(app);
-    spawn_refresh(app);
+    spawn_refresh(app, true);
 }
 
 // ---------------------------------------------------------------- commands
@@ -1080,27 +1246,38 @@ async fn add_location(app: AppHandle, zip: String) -> Value {
         return found;
     }
     let place = place_of(&found);
-    let mut list: Vec<Value> = settings_snapshot(&app)["locations"].as_array().cloned().unwrap_or_default();
-    list.retain(|l| l["zip"] != place["zip"]);
-    if list.len() >= 12 {
+    // Read, change and write in one step, so two additions at once cannot lose one.
+    let mut full = false;
+    store(&app, |d| {
+        let mut list: Vec<Value> = d["locations"].as_array().cloned().unwrap_or_default();
+        list.retain(|l| l["zip"] != place["zip"]);
+        full = list.len() >= 12;
+        if !full {
+            list.push(place.clone());
+            d["locations"] = json!(list);
+        }
+    });
+    if full {
         return json!({ "ok": false, "error": "You can keep up to 12 locations. Remove one first." });
     }
-    list.push(place.clone());
-    store(&app, |d| d["locations"] = json!(list));
     set_active(&app, place["zip"].as_str().unwrap_or(""));
     json!({ "ok": true, "place": { "zip": place["zip"], "city": place["city"], "state": place["state"] } })
 }
 
 #[tauri::command]
 fn remove_location(app: AppHandle, zip: String) {
-    let list: Vec<Value> = settings_snapshot(&app)["locations"].as_array().cloned().unwrap_or_default();
-    if list.len() <= 1 || !list.iter().any(|l| l["zip"] == zip.as_str()) {
-        return;
-    }
     let was_active = active_zip(&app).as_deref() == Some(zip.as_str());
-    let rest: Vec<Value> = list.into_iter().filter(|l| l["zip"] != zip.as_str()).collect();
-    let first = rest[0]["zip"].as_str().unwrap_or("").to_string();
-    store(&app, |d| d["locations"] = json!(rest));
+    let mut first = None;
+    store(&app, |d| {
+        let list: Vec<Value> = d["locations"].as_array().cloned().unwrap_or_default();
+        if list.len() <= 1 || !list.iter().any(|l| l["zip"] == zip.as_str()) {
+            return; // the last place stays, and so does one that is not in the list
+        }
+        let rest: Vec<Value> = list.into_iter().filter(|l| l["zip"] != zip.as_str()).collect();
+        first = rest[0]["zip"].as_str().map(String::from);
+        d["locations"] = json!(rest);
+    });
+    let Some(first) = first else { return };
     shared(&app).cache.lock().unwrap().remove(&zip);
     if was_active {
         set_active(&app, &first);
@@ -1127,7 +1304,8 @@ async fn complete_setup(app: AppHandle, zip: String, glass: String) -> Value {
         d["locations"] = json!([place.clone()]);
         d["glass"] = json!(style);
     });
-    *shared(&app).weather.lock().unwrap() = weather::empty_state("loading", None, Some(&place));
+    *shared(&app).failure.lock().unwrap() = None;
+    present(&app);
     apply_login_item(&app);
     start_app(&app);
     if let Some(w) = window(&app, "setup") {
@@ -1139,7 +1317,7 @@ async fn complete_setup(app: AppHandle, zip: String, glass: String) -> Value {
 
 #[tauri::command]
 async fn refresh_now(app: AppHandle) {
-    refresh(&app).await;
+    refresh(&app, true).await;
 }
 
 #[tauri::command]
@@ -1295,6 +1473,19 @@ fn show_context_menu(app: AppHandle, window: WebviewWindow) {
     }
 }
 
+/// The release build stops dead on an internal error, which would otherwise leave no trace.
+/// Note the time, the version and where it happened in a file that never leaves this PC.
+fn log_crashes(dir: &PathBuf, version: String) {
+    let file = dir.join("crash.log");
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let start_over = std::fs::metadata(&file).is_ok_and(|m| m.len() > 64_000);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).write(true).append(!start_over).truncate(start_over).open(&file) {
+            let _ = writeln!(f, "{} WeathaDock {version}: {info}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%SZ"));
+        }
+    }));
+}
+
 /// Troubleshooting aid: when WEATHADOCK_LOG names a file, placement decisions are appended to it.
 fn trace(line: String) {
     if let Ok(path) = std::env::var("WEATHADOCK_LOG") {
@@ -1376,21 +1567,22 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let dir = app.path().app_config_dir()?;
+            let _ = std::fs::create_dir_all(&dir);
+            log_crashes(&dir, app.package_info().version.to_string());
             let data = load_settings(&dir, app.path().data_dir().ok());
             let cache = load_cache(&dir, &data);
             let loc = settings::active_location(&data);
-            let initial = loc
-                .as_ref()
-                .and_then(|l| cache.get(l["zip"].as_str().unwrap_or("")).cloned())
-                .unwrap_or_else(|| weather::empty_state("loading", None, loc.as_ref()));
             app.manage(Shared {
                 dir,
                 settings: Mutex::new(data),
-                weather: Mutex::new(initial),
+                weather: Mutex::new(Value::Null),
                 cache: Mutex::new(cache),
                 refresh_lock: tokio::sync::Mutex::new(()),
+                settings_file: Mutex::new(()),
                 last_attempt: Mutex::new(0),
-                last_failed: AtomicBool::new(false),
+                last_alert_check: Mutex::new(0),
+                failure: Mutex::new(None),
+                partial: AtomicBool::new(false),
                 drags: Mutex::new(HashMap::new()),
                 sizes: Mutex::new(HashMap::new()),
                 tray_number: Mutex::new(None),
@@ -1409,6 +1601,7 @@ fn main() {
             });
             app.manage(Net::new());
             app.manage(Updater::default());
+            *shared(&handle).weather.lock().unwrap() = compose(&handle);
             store(&handle, |_| {}); // write migrated settings in the new location
             create_tray(&handle)?;
             // Register (or clear) the start-with-Windows entry on every launch, so the default applies

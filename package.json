@@ -1,7 +1,6 @@
 {
   "name": "weathadock",
   "private": true,
-  "version": "1.1.0",
   "description": "WeathaDock",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/awpmap/weathadock.git" },

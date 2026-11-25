@@ -1,3 +1,15 @@
+## WeathaDock 1.1.19
+
+The first of the improvements from 1.1.16 come back, built on the steady 1.1.15. Nothing about where the weather sits on the taskbar or the desktop changes.
+
+**The weather agrees with itself.** The picture always matches the words beside it, the "Now" column is the current reading everywhere, today's high and low always include the current temperature, and it is never "Sunny" after dark.
+
+**Alerts arrive sooner and say when they end.** Alerts are checked every two minutes. The time shown is when the hazard ends, a re-issued alert is not announced twice, and the app says when alerts could not be checked instead of showing "No active alerts".
+
+**No more "Offline" after waking the PC.** A failed refresh is retried quietly. When the app really is offline it says from when, and after a while "now" becomes the forecast for the present hour instead of an old reading.
+
+**Your settings are safer.** A backup is kept and restored automatically if the settings file is ever damaged.
+
 ## WeathaDock 1.1.18
 
 **Back to the steady 1.1.15.** The weather docked on the taskbar could disappear in 1.1.16 and 1.1.17. This update returns the app to exactly how 1.1.15 worked, and the newer improvements will come back one at a time once each is proven on real PCs. Your settings and places stay as they are.

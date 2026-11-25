@@ -65,9 +65,10 @@
   function alertBanner(s) {
     var a = s.alerts && s.alerts[0];
     if (!a) return '';
-    var tz = tzOf(s), until = a.ends || a.expires;
-    var sub = until ? 'Until ' + U.when(until, tz, s.updatedAt) : (a.headline || 'Active now');
-    if (a.onset && s.updatedAt && new Date(a.onset) > new Date(s.updatedAt)) sub = 'From ' + U.when(a.onset, tz, s.updatedAt) + (until ? ' to ' + U.when(until, tz, s.updatedAt) : '');
+    /* "ends" is when the hazard ends; "expires" only says when this message is due to be replaced */
+    var tz = tzOf(s), now = U.now(s), at = new Date(now).toISOString(), until = a.ends;
+    var sub = until ? 'Until ' + U.when(until, tz, at) : 'In effect now';
+    if (a.onset && new Date(a.onset).getTime() > now) sub = 'From ' + U.when(a.onset, tz, at) + (until ? ' to ' + U.when(until, tz, at) : '');
     var more = s.alerts.length > 1 ? '<span class="wv-alert-more" title="' + (s.alerts.length - 1) + ' more">+' + (s.alerts.length - 1) + '</span>' : '';
     return '<div class="wv-alert sev-' + U.sev(a) + '" data-open="alerts" role="button" aria-label="' + esc(a.event) + ', open alerts">' +
       '<span class="wv-alert-ic">' + I.gl('alert') + '</span>' +
@@ -99,14 +100,15 @@
   }
   function updPart(s, o, short) {
     var tz = tzOf(s);
-    if (s.stale) return '<span class="wv-upd is-stale" title="' + esc(s.error || '') + '"><i class="wv-dot"></i>Offline' + (short || !s.updatedAt ? '' : ' · ' + esc(U.time(s.updatedAt, tz))) + '</span>';
+    /* out of date: always say from when, so old numbers are never taken for current ones */
+    if (s.stale) return '<span class="wv-upd is-stale" title="' + esc(s.error || '') + '"><i class="wv-dot"></i>Offline' + (s.updatedAt ? ' · ' + esc(U.when(s.updatedAt, tz, new Date(U.now(s)).toISOString())) : '') + '</span>';
     if (o.refreshing || s.status === 'loading') return '<span class="wv-upd">Updating…</span>';
     return s.updatedAt ? '<span class="wv-upd" title="Last updated">' + (short ? '' : 'Updated ') + esc(U.time(s.updatedAt, tz)) + '</span>' : '';
   }
   function header(s, c, o) {
-    var sh = c.show;
-    if (!sh.location && !sh.updated && !sh.refresh) return '';
-    var right = (sh.updated ? updPart(s, o, !sh.location ? false : true) : '') + (sh.refresh ? refreshBtn(s, o) : '');
+    var sh = c.show, upd = sh.updated || s.stale;   /* the offline marker shows in every layout */
+    if (!sh.location && !upd && !sh.refresh) return '';
+    var right = (upd ? updPart(s, o, !!sh.location) : '') + (sh.refresh ? refreshBtn(s, o) : '');
     return '<div class="wv-sec wv-head" data-open="overview">' + (sh.location ? locPart(s, o) : '') + (right ? '<span class="wv-right">' + right + '</span>' : '') + '</div>';
   }
 
@@ -120,7 +122,7 @@
     var cur = s.current || {};
     if (cur.temp == null) return '<div class="wv-temp">–</div>';
     var t = Math.round(cur.temp);
-    return '<div class="wv-temp" role="text" aria-label="' + t + ' degrees">' + t + '<i class="wv-deg" aria-hidden="true"></i></div>';
+    return '<div class="wv-temp" role="text" aria-label="' + (t < 0 ? 'minus ' + -t : t) + ' degrees">' + U.whole(t) + '<i class="wv-deg" aria-hidden="true"></i></div>';
   }
   /* paired = sits beside (or above) the big temperature: size to the digits and share their centre line */
   function iconPart(s, o, paired) {
@@ -197,7 +199,9 @@
     var cur = s.current && s.current.temp;
     if (cur != null) { lo = Math.min(lo, cur); hi = Math.max(hi, cur); }
     var span = Math.max(1, hi - lo);
-    return '<div class="wv-sec wv-days" data-open="daily">' + ds.map(function (d, i) {
+    /* "−12°" needs more room than "31°"; every row widens together so the range bars stay in line */
+    var wide = ds.some(function (d) { return (d.low != null && (d.low <= -9.5 || d.low >= 99.5)) || (d.high != null && d.high <= -9.5); });
+    return '<div class="wv-sec wv-days' + (wide ? ' is-wide' : '') + '" data-open="daily">' + ds.map(function (d, i) {
       var bar = '';
       if (d.low != null && d.high != null) {
         var l = ((d.low - lo) / span) * 100, r = ((hi - d.high) / span) * 100;
@@ -242,7 +246,7 @@
 
     var horizontal = c.orientation === 'horizontal';
     var np = s.nextPrecip || {};
-    var hasTimeline = sh.timeline && np.kind && (s.minutely || []).some(function (m) { return m.precip > 0; });
+    var hasTimeline = sh.timeline && np.kind && (s.minutely || []).slice(0, 24).some(function (m) { return m.precip > 0; });
     var hasHours = sh.hourly && (s.hourly || []).length > 0;
     var hasDays = sh.daily && (s.daily || []).length > 0;
     var alert = sh.alerts && s.alerts && s.alerts.length;
@@ -257,7 +261,7 @@
       if (line) items.push('<span class="wv-i-inc" data-open="overview">' + line + '</span>');
       var sts = statItems(s, c);
       if (sts.length) items.push('<span class="wv-i-stats" data-open="overview">' + sts.join('') + '</span>');
-      var st2 = (sh.location ? locPart(s, o) : '') + (sh.updated ? updPart(s, o, false) : '');
+      var st2 = (sh.location ? locPart(s, o) : '') + (sh.updated || s.stale ? updPart(s, o, false) : '');
       if (st2) items.push('<span class="wv-i-stack wv-i-place" data-open="overview">' + st2 + '</span>');
       if (alert) items.push(alertChip(s));
       if (sh.refresh) items.push(refreshBtn(s, o));
@@ -291,7 +295,7 @@
     /* sections that shrink-wrap to the panel need a sensible floor */
     var minW = 0;
     if (banner) minW = Math.max(minW, 256);
-    if (hd) minW = Math.max(minW, (sh.location ? 132 : 0) + (sh.updated ? (sh.location ? 62 : 112) : 0) + (sh.refresh ? 30 : 0) + 44);
+    if (hd) minW = Math.max(minW, (sh.location ? 132 : 0) + (sh.updated || s.stale ? (sh.location ? 62 : 112) : 0) + (sh.refresh ? 30 : 0) + 44);
     if (inc) minW = Math.max(minW, hasTimeline ? 284 : 272);
     if (hasDays) minW = Math.max(minW, 290);
     if (stt) minW = Math.max(minW, 236);

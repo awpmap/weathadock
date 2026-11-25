@@ -384,7 +384,8 @@ jobs:
   # builds nothing and runs none of the pull request's code.
   test-build:
     needs: build
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    # build runs after a skipped reuse job, so the default success() check would skip this too
+    if: ${{ !cancelled() && needs.build.result == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

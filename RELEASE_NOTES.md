@@ -1,3 +1,7 @@
+## WeathaDock 1.1.23
+
+**Lighter while docked.** With the weather docked on the taskbar, the hidden desktop widget is no longer kept in the background, which saves memory. Clicking the docked weather also no longer takes the keyboard away from the app you were typing in. Where it sits on the taskbar works exactly as before.
+
 ## WeathaDock 1.1.22
 
 More fixes from 1.1.16 come back, for the weather on the desktop. The weather docked on the taskbar works exactly as before.

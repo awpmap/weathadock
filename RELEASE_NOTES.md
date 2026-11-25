@@ -1,3 +1,11 @@
+## WeathaDock 1.1.21
+
+The look of the weather on the taskbar from 1.1.16 comes back. Where the weather sits on the taskbar still works exactly as in 1.1.15.
+
+**Easier to read on a light taskbar.** Snow, clouds, the moon and the alert badge are no longer white on white, and on a dark taskbar the text has a softer shadow.
+
+**Fits its space better.** When there is little room, the weather docked on the taskbar drops the hours, then the words, then the mouse battery, and shortens a long alert name, while the icon and the temperature always stay.
+
 ## WeathaDock 1.1.20
 
 One more improvement from 1.1.16 comes back. Where the weather sits on the taskbar still works exactly as in 1.1.15.

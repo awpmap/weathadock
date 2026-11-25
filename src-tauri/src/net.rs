@@ -8,6 +8,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use weathadock_core::weather::{self, NwsData};
 
+const GEO: &str = "application/geo+json";
+
 pub struct Net {
     client: reqwest::Client,
     /// zip -> (forecast url, hourly url, time zone); the NWS grid for a place never changes.
@@ -61,47 +63,54 @@ impl Net {
         Err(last)
     }
 
-    async fn fetch_nws(&self, loc: &Value) -> Option<NwsData> {
-        const GEO: &str = "application/geo+json";
+    /// Active alerts for a place, or `None` when the call failed. They only need the coordinates.
+    pub async fn fetch_alerts(&self, loc: &Value) -> Option<Vec<Value>> {
+        let url = format!("https://api.weather.gov/alerts/active?point={},{}", loc["lat"].as_f64()?, loc["lon"].as_f64()?);
+        self.get_json(&url, GEO, 1).await.ok()?["features"].as_array().cloned()
+    }
+
+    /// The Weather Service's time zone and its daily and hourly forecasts for a place, found
+    /// through the grid lookup (remembered per place).
+    async fn fetch_forecasts(&self, loc: &Value) -> Option<(Option<String>, Vec<Value>, Vec<Value>)> {
         let zip = loc["zip"].as_str()?.to_string();
-        let key = format!("{},{}", loc["lat"].as_f64()?, loc["lon"].as_f64()?);
         let cached = self.points.lock().ok()?.get(&zip).cloned();
         let (forecast, hourly, time_zone) = match cached {
             Some(p) => p,
             None => {
+                let key = format!("{},{}", loc["lat"].as_f64()?, loc["lon"].as_f64()?);
                 let j = self.get_json(&format!("https://api.weather.gov/points/{key}"), GEO, 1).await.ok()?;
                 let p = &j["properties"];
                 let point = (p["forecast"].as_str()?.to_string(), p["forecastHourly"].as_str()?.to_string(), p["timeZone"].as_str().map(String::from));
-                self.points.lock().ok()?.insert(zip, point.clone());
+                self.points.lock().ok()?.insert(zip.clone(), point.clone());
                 point
             }
         };
-        let alerts_url = format!("https://api.weather.gov/alerts/active?point={key}");
-        let (daily, hours, alerts) = tokio::join!(
-            self.get_json(&forecast, GEO, 1),
-            self.get_json(&hourly, GEO, 1),
-            self.get_json(&alerts_url, GEO, 1),
-        );
-        if daily.is_err() && hours.is_err() && alerts.is_err() {
-            return None;
+        let (daily, hours) = tokio::join!(self.get_json(&forecast, GEO, 1), self.get_json(&hourly, GEO, 1));
+        // The service moves a place to another grid now and then: look it up afresh next time.
+        if matches!(daily, Err(Failure::NotFound)) || matches!(hours, Err(Failure::NotFound)) {
+            self.points.lock().ok()?.remove(&zip);
         }
         let periods = |r: Result<Value, Failure>| r.ok().and_then(|v| v["properties"]["periods"].as_array().cloned()).unwrap_or_default();
-        Some(NwsData {
-            time_zone,
-            daily: periods(daily),
-            hourly: periods(hours),
-            alerts: alerts.ok().map(|v| v["features"].as_array().cloned().unwrap_or_default()),
-        })
+        Some((time_zone, periods(daily), periods(hours)))
     }
 
-    /// Fetch everything for a place. `Err` only when neither source answered.
-    pub async fn fetch_weather(&self, loc: &Value, previous_alerts: &Value) -> Result<Value, String> {
+    /// Everything the Weather Service has for a place. The alerts are asked for on their own,
+    /// so they arrive even when the grid lookup or the forecasts fail.
+    async fn fetch_nws(&self, loc: &Value) -> Option<NwsData> {
+        let (forecasts, alerts) = tokio::join!(self.fetch_forecasts(loc), self.fetch_alerts(loc));
+        let (time_zone, daily, hourly) = forecasts.unwrap_or_default();
+        (alerts.is_some() || !daily.is_empty() || !hourly.is_empty()).then_some(NwsData { time_zone, daily, hourly, alerts })
+    }
+
+    /// Fetch everything for a place. `Err` only when neither forecast source answered.
+    /// `previous` is the state built last time for this place (see `weather::build_state`).
+    pub async fn fetch_weather(&self, loc: &Value, previous: &Value) -> Result<Value, String> {
         let (lat, lon) = (loc["lat"].as_f64().unwrap_or(0.0), loc["lon"].as_f64().unwrap_or(0.0));
         let om_url = weather::open_meteo_url(lat, lon);
         let (nws, om) = tokio::join!(self.fetch_nws(loc), self.get_json(&om_url, "application/json", 1));
         let om = om.ok();
         let now = chrono_now_ms();
-        weather::build_state(loc, nws.as_ref(), om.as_ref(), now, previous_alerts)
+        weather::build_state(loc, nws.as_ref(), om.as_ref(), now, previous)
             .ok_or_else(|| "Could not reach the National Weather Service or Open-Meteo. Check your internet connection.".to_string())
     }
 

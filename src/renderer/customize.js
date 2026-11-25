@@ -56,8 +56,8 @@
       var extra = '';
       if (g[0] === 'Coming up') {
         extra = '<div class="cz-counts">' +
-          '<label class="cz-count" data-for="hourly"><span>Hours</span>' + seg('hours', 'Hours shown', [[4, '4'], [6, '6'], [8, '8'], [12, '12']]) + '</label>' +
-          '<label class="cz-count" data-for="daily"><span>Days</span>' + seg('days', 'Days shown', [[3, '3'], [5, '5'], [7, '7']]) + '</label></div>';
+          '<div class="cz-count" data-for="hourly"><span>Hours</span>' + seg('hours', 'Hours shown', [[4, '4'], [6, '6'], [8, '8'], [12, '12']]) + '</div>' +
+          '<div class="cz-count" data-for="daily"><span>Days</span>' + seg('days', 'Days shown', [[3, '3'], [5, '5'], [7, '7']]) + '</div></div>';
       }
       return '<div class="cz-group"><div class="cz-group-n">' + g[0] + '</div><div class="cz-group-b"><div class="cz-chips">' + chips + '</div>' + extra + '</div></div>';
     }).join('');

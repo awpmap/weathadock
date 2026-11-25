@@ -1,8 +1,10 @@
+# Temporary: runs released builds on test desktops to find out why the docked weather strip
+# comes and goes after the update to 1.1.16. To be removed with .github/repro when that is known.
 name: Desktop lab
-# Temporary: runs released builds on test desktops to find out why the weather disappears after
-# the update to 1.1.16. Removed again before anything is merged.
+# Only a push that changes the lab itself starts it, so that work on the app does not.
 on:
-  pull_request:
+  push:
+    branches: ['claude/**']
     paths:
       - .github/repro/**
       - .github/workflows/repro.yml
@@ -13,21 +15,69 @@ concurrency:
   group: lab-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  lab:
-    name: ${{ matrix.version }} ${{ matrix.part }} on ${{ matrix.os }}
+  server:
+    name: strip ${{ matrix.version }} on Windows Server 2025
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, windows-2022]
         version: ['1.1.16', '1.1.15']
-        part: [desktops, update, update-docked, update-pill, places]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-2025
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Run the app on a test desktop
+      - name: Run the docked strip on a test desktop
         shell: pwsh
-        run: ./.github/repro/desktop.ps1 -Version '${{ matrix.version }}' -Part '${{ matrix.part }}'
+        run: ./.github/repro/dock.ps1 -Version '${{ matrix.version }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab-server-${{ matrix.version }}
+          path: ${{ runner.temp }}/lab-summary.txt
+          if-no-files-found: ignore
+          retention-days: 1
+  eleven:
+    name: strip ${{ matrix.version }} on Windows 11
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['1.1.16', '1.1.15']
+    runs-on: windows-11-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the docked strip on a test desktop
+        shell: pwsh
+        run: ./.github/repro/dock.ps1 -Version '${{ matrix.version }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lab-eleven-${{ matrix.version }}
+          path: ${{ runner.temp }}/lab-summary.txt
+          if-no-files-found: ignore
+          retention-days: 1
+  server-summary:
+    name: Summary, Windows Server 2025
+    needs: server
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lab-server-*
+          path: lab
+      - name: Print every summary
+        run: |
+          for f in lab/*/lab-summary.txt; do echo "===== $f"; cat "$f"; echo; done
+  eleven-summary:
+    name: Summary, Windows 11
+    needs: eleven
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lab-eleven-*
+          path: lab
+      - name: Print every summary
+        run: |
+          for f in lab/*/lab-summary.txt; do echo "===== $f"; cat "$f"; echo; done

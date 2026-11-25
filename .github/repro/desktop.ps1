@@ -135,7 +135,12 @@ $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 
 $setup = Join-Path $env:TEMP "WeathaDock_${Version}_x64-setup.exe"
 Invoke-WebRequest "https://github.com/awpmap/weathadock/releases/download/v$Version/WeathaDock_${Version}_x64-setup.exe" -OutFile $setup
-Start-Process $setup -ArgumentList '/S' -Wait
+"LAB downloaded: " + (Test-Path $setup)
+# Installed the way an update from inside the app installs it: no questions, and it closes by itself.
+$installer = Start-Process $setup -ArgumentList '/P' -PassThru
+if (-not $installer.WaitForExit(180000)) { "LAB the installer did not finish in three minutes"; Stop-Process -Id $installer.Id -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
+Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
 $exe = Join-Path $env:LOCALAPPDATA 'WeathaDock\weathadock.exe'
 "LAB installed: " + (Test-Path $exe) + " " + $(if (Test-Path $exe) { (Get-Item $exe).VersionInfo.ProductVersion })
 if (-not (Test-Path $exe)) { Write-Error "The installer did not put the app in place."; exit 1 }

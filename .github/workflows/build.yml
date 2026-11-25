@@ -250,6 +250,117 @@ jobs:
           Write-Output "SCREENSHOT9-END"
           $back = [Smoke.Win]::Visible($dock.Id, 30)
           "STRIP after the taskbar emptied: $back"
+          # The strip's right-click menu, and a taskbar that hides itself. Whatever goes wrong is
+          # reported after the app's own notes below.
+          Add-Type -Namespace Smoke -Name Dock -MemberDefinition @'
+          public struct Rect { public int Left, Top, Right, Bottom; }
+          [StructLayout(LayoutKind.Sequential)] public struct BarData { public int size; public IntPtr window; public uint message; public uint edge; public Rect rect; public IntPtr param; }
+          [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
+          [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint cmd);
+          [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+          [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+          [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int max);
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+          [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+          [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+          [DllImport("shell32.dll")] static extern UIntPtr SHAppBarMessage(uint msg, ref BarData data);
+          static bool IsStrip(IntPtr h, uint app) {
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            if (pid != app) return false;
+            var s = new System.Text.StringBuilder(80); GetWindowText(h, s, 80);
+            return s.ToString() == "WeathaDock taskbar";
+          }
+          static string Place(Rect r) { return r.Left + " " + r.Top + " " + r.Right + " " + r.Bottom; }
+          // "shown left top right bottom", "hidden ..." or "none"
+          public static string Strip(uint app) {
+            string found = "none";
+            for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2)) {
+              if (!IsStrip(h, app)) continue;
+              Rect r; GetWindowRect(h, out r);
+              if (IsWindowVisible(h)) return "shown " + Place(r);
+              found = "hidden " + Place(r);
+            }
+            return found;
+          }
+          public static string Bar() { Rect r; return GetWindowRect(FindWindow("Shell_TrayWnd", null), out r) ? Place(r) : "none"; }
+          // The open menu, "left top right bottom" and what lies over it ("nothing", "the strip",
+          // "the taskbar"), or "none".
+          public static string Menu(uint app) {
+            IntPtr menu = IntPtr.Zero;
+            for (IntPtr h = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "#32768", null); h != IntPtr.Zero; h = FindWindowEx(IntPtr.Zero, h, "#32768", null))
+              if (IsWindowVisible(h)) { menu = h; break; }
+            if (menu == IntPtr.Zero) return "none";
+            Rect m; GetWindowRect(menu, out m);
+            IntPtr bar = FindWindow("Shell_TrayWnd", null);
+            string over = "nothing";
+            for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero && h != menu; h = GetWindow(h, 2)) {
+              if (!IsWindowVisible(h)) continue;
+              Rect r; GetWindowRect(h, out r);
+              if (r.Right <= m.Left || r.Left >= m.Right || r.Bottom <= m.Top || r.Top >= m.Bottom) continue;
+              if (h == bar) { over = "the taskbar"; break; }
+              if (IsStrip(h, app)) { over = "the strip"; break; }
+            }
+            return Place(m) + " " + over;
+          }
+          // "Automatically hide the taskbar", on or off.
+          public static void AutoHide(bool on) {
+            var d = new BarData(); d.size = Marshal.SizeOf(typeof(BarData)); d.window = FindWindow("Shell_TrayWnd", null);
+            d.param = new IntPtr(on ? 1 : 2);
+            SHAppBarMessage(10, ref d);
+          }
+          '@
+          function Save-Bottom($name, $high) {
+            $pic = New-Object System.Drawing.Bitmap $b.Width, $high
+            [System.Drawing.Graphics]::FromImage($pic).CopyFromScreen(0, ($b.Height - $high), 0, 0, (New-Object System.Drawing.Size $b.Width, $high))
+            $pic.Save("smoke/$name.jpg", $jpeg, $q)
+            Write-Output "$($name.ToUpper())-BEGIN"
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes("smoke/$name.jpg")) -split '(.{4000})' | Where-Object { $_ }
+            Write-Output "$($name.ToUpper())-END"
+          }
+          $dockFail = @()
+          # Right-click the strip: the menu must open fully above the taskbar, and stay uncovered
+          # while the strip keeps itself above the taskbar.
+          $s = [Smoke.Dock]::Strip($dock.Id) -split ' '
+          $bar = [Smoke.Dock]::Bar() -split ' '
+          if ($s[0] -ne 'shown') { $dockFail += "The docked strip was not on screen for the menu check ($($s -join ' '))." }
+          else {
+            [Smoke.Dock]::SetCursorPos([int](([int]$s[1] + [int]$s[3]) / 2), [int](([int]$s[2] + [int]$s[4]) / 2)) | Out-Null
+            Start-Sleep -Milliseconds 500
+            [Smoke.Dock]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+            [Smoke.Dock]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Seconds 3
+            $menu = [Smoke.Dock]::Menu($dock.Id)
+            "MENU of the docked strip: $menu (taskbar from $($bar[1]) down)"
+            Save-Bottom 'menu' 420
+            # Closed again with a click on an empty part of the screen.
+            [Smoke.Dock]::SetCursorPos([int]($b.Width / 2), 120) | Out-Null
+            Start-Sleep -Milliseconds 300
+            [Smoke.Dock]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [Smoke.Dock]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Seconds 1
+            $m = $menu -split ' ', 5
+            if ($m[0] -eq 'none') { $dockFail += "Right-clicking the docked strip opened no menu." }
+            elseif ([int]$m[3] -gt [int]$bar[1]) { $dockFail += "The strip's menu reaches under the top of the taskbar ($menu; the taskbar starts at $($bar[1]))." }
+            elseif ($m[4] -ne 'nothing') { $dockFail += "The strip's menu is covered by $($m[4])." }
+          }
+          # "Automatically hide the taskbar": the strip stays where it is while the taskbar is
+          # tucked away, and is in its place once the taskbar is always shown again.
+          $before = [Smoke.Dock]::Strip($dock.Id)
+          [Smoke.Dock]::AutoHide($true)
+          [Smoke.Dock]::SetCursorPos([int]($b.Width / 2), 120) | Out-Null
+          Start-Sleep -Seconds 10
+          $tucked = [Smoke.Dock]::Strip($dock.Id)
+          "STRIP while the taskbar hides itself: $tucked (taskbar $([Smoke.Dock]::Bar()); before: $before)"
+          Save-Bottom 'tucked' 160
+          [Smoke.Dock]::AutoHide($false)
+          Start-Sleep -Seconds 8
+          $again = [Smoke.Dock]::Strip($dock.Id)
+          "STRIP once the taskbar is always shown again: $again (taskbar $([Smoke.Dock]::Bar()))"
+          $place = { param($x) ($x -split ' ')[0..2] -join ' ' }
+          if ((& $place $tucked) -ne (& $place $before)) { $dockFail += "While the taskbar hid itself, the docked strip did not stay where it was ($before before, $tucked then)." }
+          if ((& $place $again) -ne (& $place $before)) { $dockFail += "Once the taskbar was always shown again, the docked strip was not back in its place ($before before, $again after)." }
           if ($dock.HasExited) { Write-Error "WeathaDock (taskbar placement, mouse battery on) exited early with code $($dock.ExitCode)"; exit 1 }
           Stop-Process -Id $dock.Id -Force -ErrorAction SilentlyContinue
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Select-Object -Last 120 | ForEach-Object { "TRACE $_" }
@@ -257,6 +368,7 @@ jobs:
           Get-Content $env:WEATHADOCK_LOG -ErrorAction SilentlyContinue | Where-Object { $_ -match '^(stations in reach|now):' } | ForEach-Object { "STATION $_" }
           $env:WEATHADOCK_LOG = $null
           if ($back -notmatch '\d on top; ') { Write-Error "After the taskbar emptied again, the docked strip did not come back."; exit 1 }
+          if ($dockFail) { Write-Error ($dockFail -join ' '); exit 1 }
           # Fourth run: a desktop widget set to stay above other windows. Once a full-screen
           # window has come and gone, the widget must be back on screen and still on top.
           '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","launchAtLogin":false,"alertNotifications":false,"widgetOnTop":true}' | Set-Content (Join-Path $cfg 'settings.json')

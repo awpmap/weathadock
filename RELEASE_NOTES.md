@@ -1,26 +1,10 @@
-## WeathaDock 1.1.17
+## WeathaDock 1.1.18
 
-**The weather docked on the taskbar stays put.** In 1.1.16 it could come and go by itself, for example on a taskbar set to hide itself. It now keeps its place until the taskbar has really changed, and stays on screen while the taskbar is tucked away.
+**Back to the steady 1.1.15.** The weather docked on the taskbar could disappear in 1.1.16 and 1.1.17. This update returns the app to exactly how 1.1.15 worked, and the newer improvements will come back one at a time once each is proven on real PCs. Your settings and places stay as they are.
 
-**Its right-click menu opens above the taskbar.** Nothing covers the lower items any more, and the menu offers the same choices as the tray icon.
+## WeathaDock 1.1.15
 
-### Also new since 1.1.15
-
-**Measured, not modeled.** Where an official weather station is close by (an airport's, as a rule), the temperature, humidity, wind, pressure and visibility are now the ones it measured, and the WeathaDock window says where and when. Everywhere else the app works as before.
-
-**Readable on any wallpaper.** The widget's text now picks light or dark by itself from the wallpaper behind it, and follows when you move the widget or change the picture. Customize has a new Text color choice, Auto, which is the default; Light and Dark work as before.
-
-**The weather agrees with itself.** The picture now always matches the words beside it, the "Now" column is the current reading everywhere, today's high and low always include the current temperature, and it is never "Sunny" after dark.
-
-**Alerts arrive sooner and say when they end.** Alerts are checked every two minutes. The time shown is when the hazard ends, a re-issued alert is not announced twice, and the app says when alerts could not be checked instead of showing "No active alerts".
-
-**No more "Offline" after waking the PC.** A failed refresh is retried quietly. When the app really is offline it says from when, and after a while "now" becomes the forecast for the present hour instead of an old reading.
-
-**A widget kept above other windows stays put.** It no longer disappears after a full-screen game or video. The docked strip follows the taskbar as it fills up, and on a full taskbar it steps aside while the tray icon shows the temperature.
-
-**Easier to read on a light taskbar.** Snow, clouds, the moon and the alert badge are no longer white on white, and the mouse battery stays in view when the strip drops hours to fit.
-
-**Your settings are safer.** A backup is kept and restored automatically if the settings file is ever damaged.
+**Full screen on another monitor leaves the weather alone.** The weather used to step aside whenever any screen went full screen. It now hides only when the full-screen game, video or app is on the same monitor as the weather, and stays put when it is on a different one.
 
 This update installs from inside the app: open Settings and choose Check for updates.
 

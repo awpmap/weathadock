@@ -46,7 +46,7 @@ sky.windowControl(action: 'close'|'minimize'|'maximize'): void   // detail + set
 sky.moveBy(dx: number, dy: number): void                  // widget + pill: drag the window (screen px deltas)
 sky.dragEnd(): void                                       // persist position after a drag
 sky.setContentSize(width: number, height: number): void   // widget + pill: fit window to content (CSS px)
-sky.setTrayIcon(dataUrl: string): void                    // widget, and the pill while docked; see below
+sky.setTrayIcon(dataUrl: string): void                    // widget only, see below
 sky.quit(): void
 ```
 
@@ -71,13 +71,12 @@ Widget and pill call `sky.setContentSize(w, h)` after each render and when their
 (ResizeObserver on the root). Widget width is fixed at 380; only height varies. Do not
 animate the outer size.
 
-### Tray icon (`SkyUI.tray(state)` in common.js)
-Draws the current temperature (digits only, e.g. `72`, with a degree mark when there is room) in
-white on a sky-blue 64x64 tile, so the number reads as weather on light and dark taskbars; with
-an active alert it adds a dot in the alert's color in the top-right corner. Without a
-temperature it draws a simple cloud glyph. It calls `sky.setTrayIcon(canvas.toDataURL('image/png'))`
-when the picture changes. The widget calls it after each state update. Docked on the taskbar
-there is no widget, so the pill does; main decides when the tray shows the picture.
+### Tray icon (widget.js)
+After each state update draw the current temperature (digits only, e.g. `72`, no degree sign
+if 3 chars) on a 64x64 canvas: bold white text filling the square, soft dark outline so it
+reads on light and dark taskbars; when there is an active alert add a small amber/red dot in
+the top-right corner. Call `sky.setTrayIcon(canvas.toDataURL('image/png'))`. If there is no
+temperature draw a simple cloud glyph.
 
 ## Types
 
@@ -252,7 +251,7 @@ type WidgetConfig = {
   orientation: 'vertical' | 'horizontal'   // stack sections top to bottom, or flow them left to right
   size: 'small' | 'medium' | 'large' | 'xlarge'   // overall scale of the widget
   align: 'left' | 'center' | 'right'       // text/content alignment within the widget
-  ink: 'auto' | 'light' | 'dark'           // light text for dark wallpapers, dark text (light halo) for bright ones; 'auto' (the default) picks between them, see the rules
+  ink: 'light' | 'dark'                    // light text for dark wallpapers, dark text (light halo) for bright ones
   hours: 4 | 6 | 8 | 12                    // how many hours in the hourly strip
   days: 3 | 5 | 7                          // how many days in the daily list
   show: {                                  // every element is individually toggleable
@@ -281,15 +280,6 @@ Rules:
   with a LIVE PREVIEW of the widget that updates instantly, shown over a selectable sample
   backdrop (dark, bright, photo-like) so people can judge legibility. Changes apply to the real
   widget immediately. Include "Reset to preset".
-- Text colour `'auto'`: main works out how bright the wallpaper is behind the widget and says
-  whether it calls for dark text, as `{ dark: boolean }` from `sky.getBackdrop()` and through
-  `sky.onBackdrop(cb)` whenever the answer changes (the widget was moved or resized, the
-  wallpaper changed). The widget page waits for the first answer before it first draws, half a
-  second at most, so the text never starts in one colour and changes to the other.
-  `WDWidget.mount` takes the answer as `opts.darkText`. Only the transparent style uses it: on
-  the two glass styles the text sits on the glass, and `'auto'` stays light there. The preview
-  in Settings goes by its sample backdrop instead (dark text on the bright one), and the mock
-  answers dark with `?backdrop=bright`.
 - The taskbar pill is not affected by `widget` config.
 - Mock: add `widget` to mock settings and a `?widget=<url-encoded JSON>` design param.
 
@@ -331,87 +321,11 @@ sky.showContextMenu(): void         // widget + pill: call on right-click (conte
 
 `Settings.placement = 'taskbar'` replaces the desktop widget with the pill window docked in the free
 space left of the Start button. `sky.getDock()` / `sky.onDock(cb)` give `{ room, light }`: the logical
-pixels available (0 when it cannot dock) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
-chooses what the strip shows; patch it as a whole object. To fit, the pill drops hours, then the hint,
-the words and the mouse battery, and at last shortens an alert's name down to its badge. The icon and
-the temperature always stay; main never docks it in less than 140 px. With less room than that: on a
-taskbar with left-aligned icons the pill keeps its place by the tray; on a centered taskbar (which
-then has no room by the tray either) main hides the pill and the tray icon shows the temperature
-until there is room again.
+pixels available (0 when the taskbar has no free stretch, in which case the pill keeps its place by
+the tray) and whether the taskbar is light. `Settings.taskbar = { condition, highLow, hint: boolean, hours: 0|2|4|6 }`
+chooses what the strip shows; patch it as a whole object. The pill drops hours, then the hint, then the words to fit.
 
 ## Revision 6: mouse battery
 
 `Settings.mouseBattery: boolean` (default off). `sky.getBattery()` / `sky.onBattery(cb)` give
 `{ tier: 'good'|'mid'|'low'|'urgent', label, charging, low, urgent, stale, age } | null` (bands instead of a percentage since 1.1.14: good above 50, mid 21 to 50, low 8 to 20, urgent below 8) (`stale` with `age` text such as "12 min ago" once the mouse has not answered for three minutes; `sky.getBatteryLog()` gives the last checks as copyable text), read from a Logitech wireless mouse over HID++ (see `hidpp.rs`).
-
-## Revision 7: a state that follows the clock
-
-Main now works out what is shown from the data it fetched last and the present time, so no page
-has to age anything itself. `crates/core/tests/truth.rs` holds these rules as tests.
-
-Additions to `WeatherState` (everything else keeps its shape):
-
-```ts
-  utcOffset: number                      // the place's UTC offset, in seconds
-  sources: { nws: boolean, openMeteo: boolean, alerts: boolean }   // alerts: checked successfully within the last 20 minutes
-  alertsAt: string | null                // ISO, the last successful alerts check
-  nwsHigh: { date: string, value: number } | null   // for main only: the Weather Service's high for today
-  // nextPrecip gains:
-  chance: number | null                  // set when the heads-up rests on the hourly chance of precipitation
-  // each alert gains:
-  replaces: string[]                     // ids of the messages this alert takes the place of
-```
-
-What main guarantees, and what the pages must keep to:
-
-- **One source for each thing shown.** `current` is Open-Meteo's reading (the forecast for the
-  present hour when Open-Meteo is unavailable). Highs, lows, the hourly and daily rows and their
-  words are the Weather Service's, and every `icon` is derived from the words beside it, so the
-  two cannot disagree. `feelsLike` is wind chill in the cold and heat index in the heat, as the
-  Weather Service works them out. After sunset "Sunny" reads "Clear".
-- **"Now" is `current`.** `hourly[0]` is the hour we are in and repeats `current` for temp,
-  feelsLike, icon, isDay, condition, wind and humidity. Label it "Now".
-- **Today's range contains now.** `today.high` and `today.low` always include `current.temp`.
-  After midnight the low is the low of the night in progress; the evening keeps the day's high.
-- **Rain timing.** `minutely` holds up to 12 hours (48 steps); charts draw the first 24. A lone
-  step with a trace counts as dry, so bars and headline agree. With nothing in the 15-minute data
-  but an hour the forecast calls likely wet, the headline reads "Rain likely around 5 PM (70%)"
-  with `chance` set and `isNow` false: show no minute counts for it.
-- **Time passing.** Between fetches main advances the state: hours that have passed drop off,
-  days roll over at local midnight, alerts that have ended disappear. After 90 minutes without
-  fresh data `current` takes the forecast for the present hour, and what only a reading can tell
-  (gust, pressure, visibility, UV index, dew point) becomes null. Show "Not reported" for those.
-- **Offline.** `stale` is set only when a refresh the person asked for failed, or the data is
-  older than two refresh intervals. Every layout then says from when: "Offline · 2:31 PM".
-- **Alerts.** They are checked every two minutes on their own. An alert ends at `ends`;
-  `expires` only says when that message is due to be replaced and is never shown as the end.
-  While `sources.alerts` is false, never say "No active alerts".
-- Detail window keyboard: Ctrl+1..6 follow the order of the sidebar.
-
-## Revision 8: measured where a station is near
-
-`current` gains two fields. Both are null unless a station's report is behind the numbers:
-
-```ts
-  observedAt: string | null              // ISO: when the station took its report
-  station: { id: string, name: string, miles: number } | null   // "KMDW", "Chicago, Chicago Midway Airport", 9.8
-```
-
-- **Measured where it can be.** When an official station (one with a four-character identifier,
-  such as an airport's) stands within 25 km of the place and within 150 m of its height, and its
-  latest report is at most 90 minutes old, `current` carries what the station measured:
-  temperature, dew point and the humidity that follows from those two, the wind as one set
-  (speed, direction, gusts), pressure and visibility. `feelsLike` is worked out from the measured
-  values. Anything the station left out stays the model's, kept in step with the rest: the dew
-  point is never above the temperature, and calm air has no direction. Otherwise `current` is
-  Open-Meteo's, as in Revision 7.
-- **The sky stays with the rain timing.** `condition`, `icon`, `isDay` and `uvIndex` are never
-  the station's. The words must agree with the 15-minute rain timing beside them, and that is
-  Open-Meteo's.
-- **Say where and when.** Where the detail window shows the current conditions it names the
-  station: "Measured 1:53 PM at Chicago, Chicago Midway Airport", the time first so that a long
-  name is cut short before the time is. Settings, under Data sources, says which station is in
-  use, or that none close by has a recent report. The widget, the strip and the tray stay as
-  they are.
-- **Time passing.** When `current` takes the forecast for the present hour after 90 minutes
-  without fresh data, `observedAt` and `station` become null with the readings.

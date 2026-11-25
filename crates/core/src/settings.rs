@@ -15,7 +15,7 @@ const SHOW_KEYS: [&str; 17] = [
 /// Everything the desktop widget can show and how it is arranged. Presets are instances of this.
 pub fn widget_defaults() -> Value {
     json!({
-        "orientation": "vertical", "size": "medium", "align": "left", "ink": "auto", "hours": 6, "days": 5,
+        "orientation": "vertical", "size": "medium", "align": "left", "ink": "light", "hours": 6, "days": 5,
         "show": {
             "location": true, "updated": true, "refresh": true, "icon": true, "temp": true, "condition": true,
             "highLow": true, "feelsLike": true, "incoming": true, "timeline": true, "hourly": true, "daily": true,
@@ -26,7 +26,7 @@ pub fn widget_defaults() -> Value {
 
 pub fn defaults() -> Value {
     json!({
-        "version": 4,
+        "version": 3,
         "locations": [], "activeZip": null,
         "glass": "none",            // widget style: none (fully transparent) | clear (tinted) | frosted
         "layout": "full",           // preset the widget started from, or "custom"
@@ -52,7 +52,7 @@ pub fn sanitize_widget(input: &Value, base: &Value) -> Value {
         ("orientation", vec![json!("vertical"), json!("horizontal")]),
         ("size", vec![json!("small"), json!("medium"), json!("large"), json!("xlarge")]),
         ("align", vec![json!("left"), json!("center"), json!("right")]),
-        ("ink", vec![json!("auto"), json!("light"), json!("dark")]),
+        ("ink", vec![json!("light"), json!("dark")]),
         ("hours", vec![json!(4), json!(6), json!(8), json!(12)]),
         ("days", vec![json!(3), json!(5), json!(7)]),
     ];
@@ -125,20 +125,12 @@ pub fn sanitize_patch(patch: &Value, current: &Value) -> Map<String, Value> {
     out
 }
 
-/// A stored place is usable only with a 5-digit zip and real coordinates.
-fn valid_place(place: &Value) -> bool {
-    let zip = place["zip"].as_str().unwrap_or("");
-    let within = |key: &str, limit: f64| place[key].as_f64().is_some_and(|v| v.abs() <= limit);
-    zip.len() == 5 && zip.bytes().all(|b| b.is_ascii_digit()) && within("lat", 90.0) && within("lon", 180.0)
-}
-
 /// Merge a stored settings file over the defaults and bring older formats up to date.
 pub fn load(stored: Option<Value>) -> Value {
     let mut data = defaults();
     let Some(Value::Object(stored)) = stored else { return data };
     let had_single_location = stored.contains_key("location"); // the very first preview build
     let had_widget = stored.contains_key("widget");
-    let written_by = stored.get("version").and_then(Value::as_i64).unwrap_or(0);
     for (k, v) in &stored {
         data[k.as_str()] = v.clone();
     }
@@ -153,24 +145,12 @@ pub fn load(stored: Option<Value>) -> Value {
         data["glass"] = json!("none");
         data["coveredMode"] = json!("tray");
     }
-    // A place without coordinates would be looked up at latitude 0, longitude 0 and shown
-    // under the city's name. Without any usable place the app asks for one again.
-    if let Some(list) = data["locations"].as_array_mut() {
-        list.retain(valid_place);
-        list.truncate(12);
-    }
     if let Some(o) = data.as_object_mut() {
         o.remove("location");
         o.remove("zip");
         o.remove("lastSeenVersion");
     }
     data["widget"] = sanitize_widget(&data["widget"].clone(), &widget_defaults());
-    // Up to version 3 the text was light unless someone chose dark. Light was the only
-    // default there was, so it now becomes "auto": light on a dark wallpaper as before, dark
-    // on a bright one. A choice of dark is kept.
-    if written_by < 4 && data["widget"]["ink"] == "light" {
-        data["widget"]["ink"] = json!("auto");
-    }
     data["taskbar"] = sanitize_taskbar(&data["taskbar"].clone(), &taskbar_defaults());
     if !had_widget {
         data["widgetSet"] = json!(false);
@@ -185,7 +165,7 @@ pub fn load(stored: Option<Value>) -> Value {
     if !data["notifiedAlerts"].is_array() {
         data["notifiedAlerts"] = json!([]);
     }
-    data["version"] = json!(4);
+    data["version"] = json!(3);
     data
 }
 
@@ -246,21 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn keeps_only_places_that_can_be_looked_up() {
-        let place = |zip: Value, lat: Value, lon: Value| json!({ "zip": zip, "city": "Springfield", "state": "IL", "lat": lat, "lon": lon });
-        let d = load(Some(json!({ "activeZip": "00000", "notifiedAlerts": [{ "id": "a", "event": "Wind Advisory", "severity": "Minor" }, "b"], "locations": [
-            place(json!("62701"), json!(39.8), json!(-89.65)), place(json!("62702"), json!(null), json!(-89.6)), place(json!("627"), json!(39.8), json!(-89.6)),
-            place(json!(62703), json!(39.8), json!(-89.6)), place(json!("62704"), json!("39.8"), json!(-89.6)), place(json!("62705"), json!(239.8), json!(-89.6)),
-            json!("62706"), json!(null),
-        ] })));
-        assert_eq!(public_locations(&d)["locations"], json!([{ "zip": "62701", "city": "Springfield", "state": "IL" }]));
-        assert_eq!(active_zip(&d).as_deref(), Some("62701"));
-        assert_eq!(d["notifiedAlerts"].as_array().map(Vec::len), Some(2), "the record of announced alerts is kept as written");
-        let none = load(Some(json!({ "locations": [place(json!("62702"), json!(null), json!(null))] })));
-        assert!(active_location(&none).is_none(), "with no usable place the app asks for one again");
-    }
-
-    #[test]
     fn widget_patch_merges_over_current() {
         let d = load(None);
         let p = sanitize_patch(&json!({ "layout": "custom", "widget": { "orientation": "horizontal", "show": { "hourly": false } } }), &d);
@@ -269,25 +234,6 @@ mod tests {
         assert_eq!(p["widget"]["show"]["temp"], true);
         assert_eq!(p["widgetSet"], true);
         assert_eq!(p["layout"], "custom");
-    }
-
-    #[test]
-    fn the_text_colour_follows_the_wallpaper_unless_someone_chose_one() {
-        assert_eq!(load(None)["widget"]["ink"], "auto");
-        let stored = |version: Value, ink: &str| load(Some(json!({ "version": version, "widget": { "ink": ink, "size": "large" } })));
-        // Light was the only default before version 4, so it was not a choice. Dark was.
-        assert_eq!(stored(json!(3), "light")["widget"]["ink"], "auto");
-        assert_eq!(stored(json!(null), "light")["widget"]["ink"], "auto");
-        assert_eq!(stored(json!(3), "dark")["widget"]["ink"], "dark");
-        assert_eq!(stored(json!(3), "light")["widget"]["size"], "large", "the rest of the widget is untouched");
-        // From version 4 on, light is something a person picked, and it stays.
-        let d = stored(json!(4), "light");
-        assert_eq!((d["widget"]["ink"].as_str(), d["version"].as_i64()), (Some("light"), Some(4)));
-        assert_eq!(load(Some(d))["widget"]["ink"], "light");
-        assert_eq!(stored(json!(3), "pink")["widget"]["ink"], "auto");
-        for (ink, kept) in [("auto", "auto"), ("light", "light"), ("dark", "dark"), ("pink", "auto")] {
-            assert_eq!(sanitize_patch(&json!({ "widget": { "ink": ink } }), &load(None))["widget"]["ink"], kept);
-        }
     }
 
     #[test]

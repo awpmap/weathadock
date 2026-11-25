@@ -1,18 +1,15 @@
 //! Windows-only window-stack helpers. They answer "is the desktop widget covered by other
-//! windows?", keep the widget at desktop level, locate the taskbar's tray area, and read the
-//! desktop wallpaper behind the widget.
+//! windows?", keep the widget at desktop level, and locate the taskbar's tray area.
 #![cfg(windows)]
 
-use weathadock_core::backdrop::Fit;
-use windows::core::{w, PCWSTR, PWSTR};
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, FindWindowW, GetClassNameW, GetForegroundWindow, GetTopWindow, GetWindow, GetWindowLongW,
     GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongW, SetWindowPos, ShowWindow,
-    GWL_EXSTYLE, GWL_STYLE, GW_HWNDNEXT, GW_OWNER, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    GWL_EXSTYLE, GW_HWNDNEXT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 pub type Handle = isize;
@@ -21,7 +18,7 @@ fn hwnd(h: Handle) -> HWND {
     HWND(h as *mut core::ffi::c_void)
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
@@ -79,11 +76,6 @@ fn fullscreen_now(fg: HWND, desktop: bool, ours: bool) -> Option<isize> {
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
             return None;
         }
-        // A window with a title bar that fills its monitor is maximized on a screen that has
-        // no taskbar, not full screen.
-        if (GetWindowLongW(fg, GWL_STYLE) as u32 & WS_CAPTION.0) == WS_CAPTION.0 {
-            return None;
-        }
         let m = info.rcMonitor;
         // Either measure of the window covering the monitor counts.
         [rect_of(fg, true), rect_of(fg, false)]
@@ -105,11 +97,6 @@ fn rect_of(h: HWND, visible_bounds: bool) -> Option<Rect> {
         }
     }
     Some(Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom })
-}
-
-/// Where a window is on the screen (physical px).
-pub fn rect(h: Handle) -> Option<Rect> {
-    rect_of(hwnd(h), false)
 }
 
 fn class_of(h: HWND) -> String {
@@ -212,30 +199,6 @@ pub fn keep_on_top(h: Handle) {
         let _ = SetWindowPos(hwnd(h), Some(HWND_TOPMOST), 0, 0, 0, 0, KEEP);
     }
 }
-/// Put a window above all others, or back among the ordinary ones, without taking focus.
-pub fn set_topmost(h: Handle, on: bool) {
-    unsafe {
-        let _ = SetWindowPos(hwnd(h), Some(if on { HWND_TOPMOST } else { HWND_NOTOPMOST }), 0, 0, 0, 0, KEEP);
-    }
-}
-/// How many ordinary app windows are open: the ones that get a taskbar button. Quick to
-/// count, and a change means the taskbar is about to move its buttons.
-pub fn app_window_count() -> u32 {
-    let mut count = 0;
-    unsafe {
-        let mut h = GetTopWindow(None).unwrap_or_default();
-        let mut guard = 0;
-        while !h.0.is_null() && guard < 4000 {
-            guard += 1;
-            let tool = GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0;
-            if IsWindowVisible(h).as_bool() && !tool && GetWindow(h, GW_OWNER).map_or(true, |owner| owner.0.is_null()) {
-                count += 1;
-            }
-            h = GetWindow(h, GW_HWNDNEXT).unwrap_or_default();
-        }
-    }
-    count
-}
 /// Bring to the front of the normal windows without taking focus or staying always-on-top.
 pub fn raise(h: Handle) {
     unsafe {
@@ -278,84 +241,11 @@ pub fn handle_of(window: &tauri::WebviewWindow) -> Option<Handle> {
     window.hwnd().ok().map(|h| h.0 as isize)
 }
 
-/// Where the primary taskbar sits when it is shown, and whether it is tucked away just now
-/// ("Automatically hide the taskbar" leaves only a sliver of it on the screen). The primary
-/// taskbar is always on the main screen.
-pub fn taskbar_home(bar: Rect) -> (Rect, bool) {
-    let Some(m) = main_screen() else { return (bar, false) };
-    let (high, wide) = (bar.bottom - bar.top, bar.right - bar.left);
-    let home = if bar.bottom > m.bottom {
-        Rect { top: m.bottom - high, bottom: m.bottom, ..bar }
-    } else if bar.top < m.top {
-        Rect { top: m.top, bottom: m.top + high, ..bar }
-    } else if bar.right > m.right {
-        Rect { left: m.right - wide, right: m.right, ..bar }
-    } else if bar.left < m.left {
-        Rect { left: m.left, right: m.left + wide, ..bar }
-    } else {
-        bar
-    };
-    (home, home != bar)
-}
-
-/// The whole of the main screen (physical px).
-fn main_screen() -> Option<RECT> {
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
-    let mut info = MONITORINFO { cbSize: core::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-    unsafe { GetMonitorInfoW(MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY), &mut info) }.as_bool().then_some(info.rcMonitor)
-}
-
-/// Whether a menu of any program is open on the screen. Windows that keep themselves above
-/// others must not climb over it, or its lower items end up under them.
-pub fn menu_open() -> bool {
-    unsafe {
-        let mut after: Option<HWND> = None;
-        for _ in 0..32 {
-            let Ok(h) = FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) else { return false };
-            if h.0.is_null() {
-                return false;
-            }
-            if IsWindowVisible(h).as_bool() {
-                return true;
-            }
-            after = Some(h);
-        }
-    }
-    false
-}
-
-/// Where a menu opened from a window on the taskbar should start, in that window's own
-/// coordinates: under the pointer, on the taskbar's edge, so that Windows opens it over the
-/// desktop and none of its items are under the taskbar. `None` when the pointer is not on the
-/// taskbar.
-pub fn menu_anchor(h: Handle) -> Option<(i32, i32)> {
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::Graphics::Gdi::ScreenToClient;
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    let (bar, _) = taskbar_rects()?;
-    let (home, _) = taskbar_home(bar);
-    if home.right - home.left <= (home.bottom - home.top) * 3 {
-        return None; // a taskbar down the side of the screen
-    }
-    let mut p = POINT::default();
-    unsafe { GetCursorPos(&mut p).ok()? };
-    if p.x < home.left || p.x >= home.right || p.y < home.top || p.y >= home.bottom {
-        return None;
-    }
-    // A menu that does not fit below its starting point opens upwards from it. A taskbar at the
-    // top of the screen (some tools put it there) has the desktop below it instead.
-    let at_top = main_screen().is_some_and(|m| home.top <= m.top && home.bottom < m.bottom);
-    p.y = if at_top { home.bottom } else { home.top };
-    unsafe { ScreenToClient(hwnd(h), &mut p).as_bool().then_some((p.x, p.y)) }
-}
-
 /// The empty stretch of the primary taskbar to the left of the Start button, as physical
 /// `(left, right)` x coordinates. With centered taskbar icons this is the wide free area a
 /// docked weather strip can use; with left-aligned icons it is empty or a few pixels.
 /// Windows 11 draws the taskbar without child windows, so the buttons are located through
-/// UI Automation. `None` when the taskbar gives no sound answer: no Start button, or one
-/// without a size or outside the taskbar, as it can report while it is busy or hidden.
+/// UI Automation. Called only when the strip is placed, never on a timer.
 pub fn taskbar_free_left() -> Option<(i32, i32)> {
     use windows::core::BSTR;
     use windows::Win32::System::Variant::VARIANT;
@@ -371,179 +261,30 @@ pub fn taskbar_free_left() -> Option<(i32, i32)> {
             let condition = uia.CreatePropertyCondition(UIA_AutomationIdPropertyId, &VARIANT::from(BSTR::from(id))).ok()?;
             root.FindFirst(TreeScope_Descendants, &condition).ok()?.CurrentBoundingRectangle().ok()
         };
-        let on_bar = |r: &RECT| r.right > r.left && r.bottom > r.top && r.left >= bar_rect.left && r.right <= bar_rect.right && r.bottom > bar_rect.top && r.top < bar_rect.bottom;
-        let start = find("StartButton").filter(on_bar)?;
+        let start = find("StartButton")?;
         // The Windows Widgets button, when switched on, takes the far left of a centered taskbar.
-        let left = find("WidgetsButton").filter(|w| on_bar(w) && w.right <= start.left).map_or(bar_rect.left, |w| w.right);
+        let left = find("WidgetsButton").filter(|w| w.right > w.left && w.left < start.left).map_or(bar_rect.left, |w| w.right);
         Some((left, start.left))
     }
 }
 
-/// A number from the registry, when it is there.
-fn registry_number(root: HKEY, key: PCWSTR, name: PCWSTR) -> Option<u32> {
-    let mut value = 0u32;
-    let mut size = 4u32;
-    let read = unsafe { RegGetValueW(root, key, name, RRF_RT_REG_DWORD, None, Some(&mut value as *mut u32 as *mut core::ffi::c_void), Some(&mut size)) };
-    read.is_ok().then_some(value)
-}
-
 /// Whether Windows is set to a light taskbar ("Light" Windows mode).
 pub fn taskbar_is_light() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut value = 1u32;
+    let mut size = 4u32;
+    unsafe {
+        let _ = RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("SystemUsesLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut core::ffi::c_void),
+            Some(&mut size),
+        )
+        .is_ok();
+    }
     // Windows is light unless the value says otherwise (a missing value means the default, light).
-    registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("SystemUsesLightTheme")).map_or(true, |v| v == 1)
-}
-
-/// Whether the taskbar keeps its buttons in the middle: Windows 11, unless the person chose the
-/// left. Windows 10 has no such taskbar.
-pub fn taskbar_is_centered() -> bool {
-    windows_11() && registry_number(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced"), w!("TaskbarAl")) != Some(0)
-}
-
-/// Windows 11 or newer, told by the build number.
-fn windows_11() -> bool {
-    let mut text = [0u16; 16];
-    let mut size = std::mem::size_of_val(&text) as u32;
-    let read = unsafe {
-        RegGetValueW(HKEY_LOCAL_MACHINE, w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"), w!("CurrentBuildNumber"), RRF_RT_REG_SZ, None, Some(text.as_mut_ptr() as *mut core::ffi::c_void), Some(&mut size))
-    };
-    read.is_ok() && String::from_utf16_lossy(&text).trim_end_matches('\0').parse::<u32>().is_ok_and(|build| build >= 22000)
-}
-
-// ---------------------------------------------------------------- the wallpaper
-
-/// The desktop wallpaper on one screen: the picture's file (empty when there is none), how
-/// Windows lays it out, the desktop colour around it, and the screen it covers (physical px).
-#[derive(Clone, Debug, PartialEq)]
-pub struct Wallpaper {
-    pub path: String,
-    pub fit: Fit,
-    pub colour: [u8; 3],
-    pub screen: Rect,
-}
-
-/// A wallpaper picture shrunk to a thumbnail: red, green, blue and one unused byte for each
-/// pixel, row by row, and the size of the picture file itself.
-#[derive(Clone)]
-pub struct Thumbnail {
-    pub pixels: Vec<u8>,
-    pub width: usize,
-    pub height: usize,
-    pub natural: (f64, f64),
-}
-
-/// COM for the calling thread, given back when this goes out of scope. Declare it before
-/// anything COM hands out, so that those are let go first.
-pub struct Com(bool);
-
-impl Com {
-    pub fn start() -> Com {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
-        Com(unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok())
-    }
-}
-
-impl Drop for Com {
-    fn drop(&mut self) {
-        if self.0 {
-            unsafe { windows::Win32::System::Com::CoUninitialize() };
-        }
-    }
-}
-
-/// Copy a string the shell allocated, with its closing zero, and give the memory back.
-unsafe fn take(text: PWSTR) -> Vec<u16> {
-    if text.is_null() {
-        return vec![0];
-    }
-    let mut copy = unsafe { text.as_wide() }.to_vec();
-    copy.push(0);
-    unsafe { windows::Win32::System::Com::CoTaskMemFree(Some(text.0 as *const core::ffi::c_void)) };
-    copy
-}
-
-/// The wallpaper of the screen a rectangle is on. `None` when Windows will not say.
-/// Asks the shell, which takes a millisecond or two; call it off the main thread.
-pub fn wallpaper_at(area: Rect) -> Option<Wallpaper> {
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-    use windows::Win32::UI::Shell::{DesktopWallpaper, IDesktopWallpaper, DWPOS_CENTER, DWPOS_FIT, DWPOS_SPAN, DWPOS_STRETCH, DWPOS_TILE};
-    unsafe {
-        let _com = Com::start();
-        let desktop: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL).ok()?;
-        let mut screens: Vec<(Vec<u16>, Rect)> = Vec::new();
-        for i in 0..desktop.GetMonitorDevicePathCount().ok()? {
-            let Ok(id) = desktop.GetMonitorDevicePathAt(i) else { continue };
-            let id = take(id);
-            // A monitor that is listed but not attached has no rectangle.
-            if let Ok(r) = desktop.GetMonitorRECT(PCWSTR(id.as_ptr())) {
-                if r.right > r.left && r.bottom > r.top {
-                    screens.push((id, Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }));
-                }
-            }
-        }
-        let (x, y) = ((area.left + area.right) / 2, (area.top + area.bottom) / 2);
-        let (id, mut screen) = screens.iter().find(|(_, r)| x >= r.left && x < r.right && y >= r.top && y < r.bottom).or(screens.first())?.clone();
-        let position = desktop.GetPosition().ok()?;
-        let fit = if position == DWPOS_CENTER {
-            Fit::Center
-        } else if position == DWPOS_TILE {
-            Fit::Tile
-        } else if position == DWPOS_STRETCH {
-            Fit::Stretch
-        } else if position == DWPOS_FIT {
-            Fit::Fit
-        } else if position == DWPOS_SPAN {
-            Fit::Span
-        } else {
-            Fit::Fill
-        };
-        if fit == Fit::Span {
-            // One picture across every screen: it is laid out over all of them together.
-            for (_, r) in &screens {
-                screen = Rect { left: screen.left.min(r.left), top: screen.top.min(r.top), right: screen.right.max(r.right), bottom: screen.bottom.max(r.bottom) };
-            }
-        }
-        let path = take(desktop.GetWallpaper(PCWSTR(id.as_ptr())).ok()?);
-        let colour = desktop.GetBackgroundColor().ok()?.0;
-        Some(Wallpaper {
-            path: String::from_utf16_lossy(&path[..path.len() - 1]),
-            fit,
-            colour: [colour as u8, (colour >> 8) as u8, (colour >> 16) as u8],
-            screen,
-        })
-    }
-}
-
-/// Read a picture file down to a thumbnail at most 96 pixels across, with the decoders Windows
-/// itself has (so every format a wallpaper can be in). `None` when it cannot be read.
-pub fn thumbnail(path: &str) -> Option<Thumbnail> {
-    use windows::Win32::Foundation::GENERIC_READ;
-    use windows::Win32::Graphics::Imaging::{
-        CLSID_WICImagingFactory, GUID_WICPixelFormat32bppBGRA, IWICImagingFactory, IWICPalette, WICBitmapDitherTypeNone, WICBitmapInterpolationModeFant,
-        WICBitmapPaletteTypeCustom, WICDecodeMetadataCacheOnDemand,
-    };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-    unsafe {
-        let _com = Com::start();
-        let factory: IWICImagingFactory = CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).ok()?;
-        let file: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
-        let frame = factory.CreateDecoderFromFilename(PCWSTR(file.as_ptr()), None, GENERIC_READ, WICDecodeMetadataCacheOnDemand).ok()?.GetFrame(0).ok()?;
-        let (mut wide, mut high) = (0u32, 0u32);
-        frame.GetSize(&mut wide, &mut high).ok()?;
-        if wide == 0 || high == 0 {
-            return None;
-        }
-        let shrink = (96.0 / wide.max(high) as f64).min(1.0);
-        let (width, height) = (((wide as f64 * shrink).round() as u32).max(1), ((high as f64 * shrink).round() as u32).max(1));
-        let scaler = factory.CreateBitmapScaler().ok()?;
-        scaler.Initialize(&frame, width, height, WICBitmapInterpolationModeFant).ok()?;
-        let converter = factory.CreateFormatConverter().ok()?;
-        converter.Initialize(&scaler, &GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, None::<&IWICPalette>, 0.0, WICBitmapPaletteTypeCustom).ok()?;
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
-        converter.CopyPixels(std::ptr::null(), width * 4, &mut pixels).ok()?;
-        // Windows hands the colours over blue first.
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel.swap(0, 2);
-        }
-        Some(Thumbnail { pixels, width: width as usize, height: height as usize, natural: (wide as f64, high as f64) })
-    }
+    value == 1
 }

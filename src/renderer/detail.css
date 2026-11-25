@@ -105,12 +105,9 @@ button.card:hover, .card.is-link:hover { background: var(--fill-2); }
 .ov-meta { display: flex; align-items: center; gap: 16px; margin-top: 6px; font-size: 14px; color: var(--t2); }
 .ov-meta b { color: var(--t1); font-weight: 600; }
 .ov-meta i { width: 1px; height: 13px; background: var(--line-strong); }
-.ov-hero > div:first-child { min-width: 0; }
-.ov-src { margin-top: 7px; font-size: 12px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-sum { grid-column: 1 / -1; margin-top: 14px; font-size: 13.5px; line-height: 1.55; color: var(--t2); max-width: 640px; user-select: text; cursor: text; }
 
 .grid-2 { display: grid; grid-template-columns: 1.45fr 1fr; gap: 12px; }
-.grid-2.is-single { grid-template-columns: 1fr; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
 .stack { margin-top: 12px; }
 
@@ -269,7 +266,6 @@ button.card:hover, .card.is-link:hover { background: var(--fill-2); }
 .set-tx { flex: 1; min-width: 0; }
 .set-name { font-size: 14px; font-weight: 500; }
 .set-sub { font-size: 12px; color: var(--t3); margin-top: 2px; line-height: 1.4; }
-.set-sub.src-station { color: var(--t2); margin-top: 4px; }
 .set-block { padding: 14px 18px 18px; }
 .set-block .looks { margin-top: 12px; max-width: 560px; }
 .set-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }

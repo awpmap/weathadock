@@ -1085,6 +1085,11 @@ Section Uninstall
     SetShellVarContext current
     RmDir /r "$APPDATA\${BUNDLEID}"
     RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
+    ; Versions 1.0.x (built on Electron) kept their settings, with the saved places, in
+    ; %APPDATA%\WeathaDock and their update downloads in %LOCALAPPDATA%\weathadock-updater.
+    ; (%LOCALAPPDATA%\WeathaDock is where the app is installed, and is removed above.)
+    RmDir /r "$APPDATA\${PRODUCTNAME}"
+    RmDir /r "$LOCALAPPDATA\weathadock-updater"
   ${EndIf}
 
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL

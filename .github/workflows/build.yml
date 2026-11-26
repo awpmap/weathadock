@@ -8,6 +8,8 @@ on:
 # only read the repository. Creating a release is left to the publish job, which runs none of it.
 permissions:
   contents: read
+# Every action is pinned to a commit, so a moved or hijacked tag cannot change what runs here.
+# Update a pin on purpose, with the tag it came from in the comment beside it.
 # One run at a time for each branch. Runs on main are never cut short, so a release that has
 # started publishing always finishes.
 concurrency:
@@ -28,7 +30,7 @@ jobs:
     outputs:
       found: ${{ steps.find.outputs.found }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - name: Find the installer this code was tested with
@@ -58,7 +60,7 @@ jobs:
           [ "$found" = true ] || echo "No tested installer for tree $tree: building it here."
           echo "found=$found" >> "$GITHUB_OUTPUT"
       - if: steps.find.outputs.found == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: WeathaDock-windows
           path: installer/*-setup.exe
@@ -68,15 +70,17 @@ jobs:
     if: ${{ !cancelled() && needs.reuse.outputs.found != 'true' }}
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable branch
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       # A release is named after the version, described by the notes and updated to by number,
       # so the three places that state it must agree before anything is built.
       - name: Check that the version is the same everywhere
@@ -115,7 +119,7 @@ jobs:
             echo "::error::weathadock.exe is $size bytes, over its 6 MB budget."
             exit 1
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: WeathaDock-windows
           path: ${{ steps.installer.outputs.file }}
@@ -376,6 +380,45 @@ jobs:
           if ($top.HasExited) { Write-Error "WeathaDock (keep above other windows) exited early with code $($top.ExitCode)"; exit 1 }
           Stop-Process -Id $top.Id -Force -ErrorAction SilentlyContinue
           if ($after -notmatch '\d on top; ') { Write-Error "After a full-screen window closed, the widget set to stay above other windows was not back on screen and on top."; exit 1 }
+      # The way every installed copy gets this version: the published version is installed and
+      # running with saved places, and the new installer runs the way the in-app updater runs it
+      # (passive, start again afterwards) while the app quits. The new version must be the one
+      # installed, running again, with the places and settings kept.
+      - name: Update from the published version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
+          $cfg = Join-Path $env:APPDATA 'app.weathadock.desktop'
+          Remove-Item -Recurse -Force $cfg -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force old | Out-Null
+          gh release download --repo "${{ github.repository }}" --pattern '*-setup.exe' --dir old --clobber
+          if ($LASTEXITCODE -ne 0) { Write-Error "Could not download the published installer."; exit 1 }
+          $old = Get-ChildItem old -Filter '*-setup.exe' | Select-Object -First 1
+          "UPDATE from $($old.Name)"
+          Start-Process $old.FullName -ArgumentList '/S' -Wait
+          $exe = Join-Path $env:LOCALAPPDATA 'WeathaDock\weathadock.exe'
+          if (-not (Test-Path $exe)) { Write-Error "The published version did not install."; exit 1 }
+          "UPDATE published version installed: " + (Get-Item $exe).VersionInfo.ProductVersion
+          New-Item -ItemType Directory -Force $cfg | Out-Null
+          '{"locations":[{"zip":"60601","city":"Chicago","state":"IL","lat":41.8858,"lon":-87.6181}],"activeZip":"60601","placement":"taskbar","launchAtLogin":false,"alertNotifications":false}' | Set-Content (Join-Path $cfg 'settings.json')
+          $app = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 15
+          if ($app.HasExited) { Write-Error "The published version exited early with code $($app.ExitCode)"; exit 1 }
+          $setup = Start-Process "${{ steps.installer.outputs.file }}" -ArgumentList '/P', '/R' -PassThru
+          Stop-Process -Id $app.Id -Force
+          if (-not $setup.WaitForExit(180000)) { Write-Error "The update did not finish within three minutes."; exit 1 }
+          Start-Sleep -Seconds 15
+          $want = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $have = (Get-Item $exe).VersionInfo.ProductVersion
+          $running = [bool](Get-Process weathadock -ErrorAction SilentlyContinue)
+          $saved = Get-Content (Join-Path $cfg 'settings.json') -Raw -ErrorAction SilentlyContinue
+          "UPDATE installed now: $have (want $want); running again: $running; places kept: " + ($saved -match '"60601"') + "; docked kept: " + ($saved -match '"placement"\s*:\s*"taskbar"')
+          Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $have.StartsWith($want)) { Write-Error "After the update the installed version is $have, not $want."; exit 1 }
+          if (-not $running) { Write-Error "The app did not start again after the update."; exit 1 }
+          if ($saved -notmatch '"60601"' -or $saved -notmatch '"placement"\s*:\s*"taskbar"') { Write-Error "The update lost the saved places or settings."; exit 1 }
       # Run the installer the way a person would (double-click, no flags) and record its
       # window while it works, then the desktop once the app has opened.
       - name: Installer screenshots
@@ -415,7 +458,7 @@ jobs:
           "STARTUP ENTRY: " + (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).WeathaDock + " | all-users (the runner is elevated): " + (Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).WeathaDock
           Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue
           Get-Process weathadock -ErrorAction SilentlyContinue | Stop-Process -Force
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: smoke
@@ -427,7 +470,7 @@ jobs:
         shell: bash
         run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
       - if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tested-${{ steps.tree.outputs.tree }}
           path: ${{ steps.installer.outputs.file }}
@@ -445,7 +488,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: WeathaDock-windows
           path: installer
@@ -484,10 +527,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: WeathaDock-windows
           path: installer

@@ -1,3 +1,7 @@
+## WeathaDock 1.1.24
+
+**Earlier warning for the mouse battery.** Low now starts at 25% instead of 20%, so the warning comes sooner. Charge now still starts below 8%.
+
 ## WeathaDock 1.1.23
 
 **Lighter while docked.** With the weather docked on the taskbar, the hidden desktop widget is no longer kept in the background, which saves memory. Clicking the docked weather also no longer takes the keyboard away from the app you were typing in. Where it sits on the taskbar works exactly as before.

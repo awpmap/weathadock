@@ -251,6 +251,59 @@ jobs:
           $procs = Get-Process | Where-Object { $_.ProcessName -match 'weathadock|msedgewebview2' }
           "DOCKED TOTAL private={0:N0} MB working={1:N0} MB processes={2}" -f (($procs | Measure-Object PrivateMemorySize64 -Sum).Sum/1MB), (($procs | Measure-Object WorkingSet64 -Sum).Sum/1MB), $procs.Count
           "STRIP docked: " + [Smoke.Win]::Visible($dock.Id, 30)
+          # The strip never takes focus. Its right-click menu must still open, and the strip must
+          # be back on top once the menu is closed.
+          Add-Type -Namespace Smoke -Name Menu -MemberDefinition @'
+          public struct Rect { public int Left, Top, Right, Bottom; }
+          [DllImport("user32.dll")] static extern IntPtr GetTopWindow(IntPtr parent);
+          [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint cmd);
+          [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+          [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+          [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, System.Text.StringBuilder text, int max);
+          [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+          [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+          [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+          // The centre of the shown strip, "x y", or "none".
+          public static string StripCentre(uint app) {
+            for (IntPtr h = GetTopWindow(IntPtr.Zero); h != IntPtr.Zero; h = GetWindow(h, 2)) {
+              uint pid; GetWindowThreadProcessId(h, out pid);
+              var s = new System.Text.StringBuilder(80); GetWindowText(h, s, 80);
+              if (pid != app || s.ToString() != "WeathaDock taskbar" || !IsWindowVisible(h)) continue;
+              Rect r; GetWindowRect(h, out r);
+              return ((r.Left + r.Right) / 2) + " " + ((r.Top + r.Bottom) / 2);
+            }
+            return "none";
+          }
+          // The open menu, "left top right bottom", or "none".
+          public static string Open() {
+            for (IntPtr h = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "#32768", null); h != IntPtr.Zero; h = FindWindowEx(IntPtr.Zero, h, "#32768", null))
+              if (IsWindowVisible(h)) { Rect m; GetWindowRect(h, out m); return m.Left + " " + m.Top + " " + m.Right + " " + m.Bottom; }
+            return "none";
+          }
+          '@
+          $centre = [Smoke.Menu]::StripCentre($dock.Id)
+          $menu = 'none'
+          if ($centre -ne 'none') {
+            $c = $centre -split ' '
+            [Smoke.Menu]::SetCursorPos([int]$c[0], [int]$c[1]) | Out-Null
+            Start-Sleep -Milliseconds 500
+            [Smoke.Menu]::mouse_event(0x0008, 0, 0, 0, [UIntPtr]::Zero)
+            [Smoke.Menu]::mouse_event(0x0010, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Seconds 3
+            $menu = [Smoke.Menu]::Open()
+            # Closed again with a click on an empty part of the screen.
+            [Smoke.Menu]::SetCursorPos([int]($b.Width / 2), 120) | Out-Null
+            Start-Sleep -Milliseconds 300
+            [Smoke.Menu]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+            [Smoke.Menu]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Seconds 3
+          }
+          "MENU of the docked strip: $menu (strip centre $centre)"
+          $afterMenu = [Smoke.Win]::Visible($dock.Id, 30)
+          "STRIP after its menu closed: $afterMenu"
+          if ($menu -eq 'none') { Write-Error "Right-clicking the docked strip opened no menu."; exit 1 }
+          if ($afterMenu -notmatch '\d on top; ') { Write-Error "After its menu closed, the docked strip was not back on top."; exit 1 }
           # A borderless window that fills the screen, like a game: the strip must get out of the way, then return.
           @'
           Add-Type -AssemblyName System.Windows.Forms

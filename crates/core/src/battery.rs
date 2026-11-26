@@ -99,7 +99,7 @@ impl Tier {
 }
 
 /// Lowest percentage of Low, Mid and Good; below the first is Urgent.
-const FLOORS: [(u8, Tier); 3] = [(8, Tier::Low), (21, Tier::Mid), (51, Tier::Good)];
+const FLOORS: [(u8, Tier); 3] = [(8, Tier::Low), (26, Tier::Mid), (51, Tier::Good)];
 /// A better band is only entered once the charge is this far past its floor, so a reading
 /// that hovers on a boundary does not flip the band back and forth.
 const CLIMB: u8 = 4;
@@ -209,7 +209,8 @@ mod tests {
         assert_eq!(tier(100, None), Tier::Good);
         assert_eq!(tier(51, None), Tier::Good);
         assert_eq!(tier(50, None), Tier::Mid);
-        assert_eq!(tier(21, None), Tier::Mid);
+        assert_eq!(tier(26, None), Tier::Mid);
+        assert_eq!(tier(25, None), Tier::Low);
         assert_eq!(tier(20, None), Tier::Low);
         assert_eq!(tier(8, None), Tier::Low);
         assert_eq!(tier(7, None), Tier::Urgent);

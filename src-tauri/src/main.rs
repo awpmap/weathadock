@@ -788,7 +788,9 @@ fn create_widget(app: &AppHandle) {
 }
 
 fn create_widget_now(app: &AppHandle) {
-    if window(app, "widget").is_some() {
+    // Docked on the taskbar, the strip carries the weather: no desktop widget, and none of the
+    // memory its page would take.
+    if docked(app) || window(app, "widget").is_some() {
         return;
     }
     let frosted = glass(app) == "frosted";
@@ -803,6 +805,7 @@ fn create_widget_now(app: &AppHandle) {
         .skip_taskbar(true)
         .shadow(false)
         .focused(false)
+        .focusable(false)
         .visible(false)
         .always_on_top(flag(app, "widgetOnTop"))
         .initialization_script(BRIDGE)
@@ -831,14 +834,19 @@ fn create_widget_now(app: &AppHandle) {
 fn show_widget(app: &AppHandle) {
     let Some(w) = window(app, "widget") else { return };
     let on_top = flag(app, "widgetOnTop");
-    let _ = w.set_always_on_top(on_top);
     show_inactive(&w);
+    // Above or below other windows is set with Win32 directly, never through the window
+    // library: it believes this window is hidden (it is shown with Win32 too) and would hide
+    // it again, and rewrite its styles, whenever the setting changed.
     #[cfg(windows)]
-    if !on_top {
-        if let Some(h) = win32::handle_of(&w) {
+    if let Some(h) = win32::handle_of(&w) {
+        win32::set_topmost(h, on_top);
+        if !on_top {
             win32::send_to_bottom(h);
         }
     }
+    #[cfg(not(windows))]
+    let _ = w.set_always_on_top(on_top);
 }
 
 fn rebuild_widget(app: &AppHandle) {
@@ -924,6 +932,7 @@ fn sync_pill_now(app: &AppHandle) {
                 .skip_taskbar(true)
                 .shadow(false)
                 .focused(false)
+                .focusable(false)
                 .visible(false)
                 .always_on_top(true)
                 .initialization_script(BRIDGE)
@@ -1065,59 +1074,61 @@ fn quit(app: &AppHandle) {
 
 #[cfg(windows)]
 fn tick(app: &AppHandle) {
-    let Some(widget) = window(app, "widget") else { return };
-    let Some(handle) = win32::handle_of(&widget) else { return };
-    let widget_on = widget_enabled(app);
-    let visible = widget.is_visible().unwrap_or(false);
-    let on_top = flag(app, "widgetOnTop");
-    let snap = win32::snapshot(handle);
-    let st = shared(app);
-    let mut c = st.covered.lock().unwrap();
+    let widget = window(app, "widget").and_then(|w| Some((win32::handle_of(&w)?, w)));
+    let pill = window(app, "pill").and_then(|w| win32::handle_of(&w));
+    // Docked, there is no widget: the strip is then the window the checks are about.
+    let Some(target) = widget.as_ref().map(|w| w.0).or(pill) else { return };
+    let snap = win32::snapshot(target);
+    let mut covered = true;
+    if let Some((handle, widget)) = widget {
+        let widget_on = widget_enabled(app);
+        let visible = widget.is_visible().unwrap_or(false);
+        let on_top = flag(app, "widgetOnTop");
+        let st = shared(app);
+        let mut c = st.covered.lock().unwrap();
 
-    // Keep the widget at desktop level: bring it forward when the desktop itself is in front
-    // (for example after Win+D), and tuck it under other apps as soon as one is used.
-    if widget_on && visible && !on_top {
-        if snap.desktop_foreground && !c.desktop_was_foreground {
-            win32::raise(handle);
-        }
-        if !snap.desktop_foreground && c.desktop_was_foreground && !snap.foreground_is_ours {
-            win32::send_to_bottom(handle);
-        }
-    }
-    c.desktop_was_foreground = snap.desktop_foreground;
-
-    let now_covered = !widget_on || !visible || (!on_top && !snap.desktop_foreground && snap.coverage >= COVERED_AT);
-    // Two matching readings in a row before switching, so a window dragged past does not flicker.
-    c.votes = if now_covered == c.covered { 0 } else { c.votes + 1 };
-    if c.votes >= 2 {
-        c.covered = now_covered;
-        c.votes = 0;
-    }
-    let covered = c.covered;
-    // A widget kept above other windows steps back while a game, video or presentation has the
-    // whole screen, and returns afterwards.
-    // Only the monitor each window is on matters: a game on another screen changes nothing.
-    let widget_fullscreen = win32::fullscreen_on(snap.fullscreen, handle);
-    if widget_fullscreen != c.fullscreen {
-        c.fullscreen = widget_fullscreen;
-        trace(format!("fullscreen on the widget's monitor -> {widget_fullscreen}"));
-        if widget_on && on_top {
-            let _ = widget.set_always_on_top(!widget_fullscreen);
-            if widget_fullscreen {
+        // Keep the widget at desktop level: bring it forward when the desktop itself is in front
+        // (for example after Win+D), and tuck it under other apps as soon as one is used.
+        if widget_on && visible && !on_top {
+            if snap.desktop_foreground && !c.desktop_was_foreground {
+                win32::raise(handle);
+            }
+            if !snap.desktop_foreground && c.desktop_was_foreground && !snap.foreground_is_ours {
                 win32::send_to_bottom(handle);
             }
         }
-    }
-    drop(c);
+        c.desktop_was_foreground = snap.desktop_foreground;
 
-    let Some(pill) = window(app, "pill") else { return };
-    let fullscreen = win32::handle_of(&pill).is_some_and(|h| win32::fullscreen_on(snap.fullscreen, h));
-    let show = covered && !fullscreen;
+        let now_covered = !widget_on || !visible || (!on_top && !snap.desktop_foreground && snap.coverage >= COVERED_AT);
+        // Two matching readings in a row before switching, so a window dragged past does not flicker.
+        c.votes = if now_covered == c.covered { 0 } else { c.votes + 1 };
+        if c.votes >= 2 {
+            c.covered = now_covered;
+            c.votes = 0;
+        }
+        covered = c.covered;
+        // A widget kept above other windows steps back while a game, video or presentation has the
+        // whole screen, and returns afterwards.
+        // Only the monitor each window is on matters: a game on another screen changes nothing.
+        let widget_fullscreen = win32::fullscreen_on(snap.fullscreen, handle);
+        if widget_fullscreen != c.fullscreen {
+            c.fullscreen = widget_fullscreen;
+            trace(format!("fullscreen on the widget's monitor -> {widget_fullscreen}"));
+            if widget_on && on_top {
+                // With Win32 directly, for the reason given in `show_widget`.
+                win32::set_topmost(handle, !widget_fullscreen);
+                if widget_fullscreen {
+                    win32::send_to_bottom(handle);
+                }
+            }
+        }
+    }
+
+    let Some(pill) = pill else { return };
+    let show = covered && !win32::fullscreen_on(snap.fullscreen, pill);
     set_pill_visible(app, show);
     if show {
-        if let Some(h) = win32::handle_of(&pill) {
-            win32::keep_on_top(h); // the taskbar likes to climb back over it
-        }
+        win32::keep_on_top(pill); // the taskbar likes to climb back over it
     }
 }
 
@@ -1164,18 +1175,19 @@ fn apply_settings(app: &AppHandle, patch: &Value) {
             let _ = pill.destroy();
         }
     }
-    if changed("widgetOnTop") && !changed("glass") {
-        if widget_enabled(app) {
-            show_widget(app);
-        } else if let Some(w) = window(app, "widget") {
-            let _ = w.set_always_on_top(flag(app, "widgetOnTop"));
-        }
+    // A hidden widget picks the setting up when it is shown again.
+    if changed("widgetOnTop") && !changed("glass") && widget_enabled(app) {
+        show_widget(app);
     }
     if changed("showWidget") || changed("placement") {
-        if widget_enabled(app) {
-            show_widget(app);
-        } else if let Some(w) = window(app, "widget") {
-            hide_window(&w);
+        match window(app, "widget") {
+            // Docked, the strip carries the weather: the widget and its page are let go.
+            Some(w) if docked(app) => {
+                let _ = w.destroy();
+            }
+            Some(w) if !widget_enabled(app) => hide_window(&w),
+            Some(_) => show_widget(app),
+            None => create_widget(app),
         }
     }
     if changed("coveredMode") || changed("glass") || changed("placement") {

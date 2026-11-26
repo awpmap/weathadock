@@ -1,3 +1,9 @@
+## WeathaDock 1.1.25
+
+**A cleaner uninstall.** When you choose to remove your data while uninstalling, the settings and saved places left behind by the old 1.0 versions go too.
+
+Behind the scenes, every update is now tried before release by installing it over the version you have, the way the app updates itself.
+
 ## WeathaDock 1.1.24
 
 **Earlier warning for the mouse battery.** Low now starts at 25% instead of 20%, so the warning comes sooner. Charge now still starts below 8%.
